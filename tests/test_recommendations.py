@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 from models import RecommendationRequest
 from context import ContextError
-from recommendations import recommendation_context, select_products
+from recommendations import recommendation_context, select_products, package_weight, public_product
 from services import FirebaseService, HTTPResult, ServiceError
 from main import app
 import json
@@ -18,6 +18,16 @@ def products():
     return [(str(i),dict(data,nome='Produto '+str(i),codigo=str(i))) for i in range(4)]
 
 class RecommendationTest(unittest.TestCase):
+    def test_package_weight_uses_description_not_commercial_sales_volume(self):
+        self.assertEqual(package_weight('LINGUICA SWIFT 700G'), 0.7)
+        self.assertEqual(package_weight('FILE 1KG'), 1)
+        self.assertEqual(package_weight('FILE 0,5 KG'), 0.5)
+        self.assertIsNone(package_weight('ACEM KG'))
+        self.assertIsNone(package_weight('KIT 700G 1KG'))
+        card = public_product('p', {'nome':'FILE 1KG','dadosOriginais':{'Volume (KG)':330187}})
+        self.assertEqual(card['peso_embalagem_kg'], 1)
+        self.assertNotIn('330187', str(card))
+
     def test_three_distinct_available_products_without_commercial_fields(self):
         records=products()+[('duplicate',dict(products()[0][1]))]+[('hidden',dict(products()[0][1],disponivelNoJogo=False,codigo='hidden'))]
         output=select_products(context(),records)

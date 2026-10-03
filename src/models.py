@@ -36,7 +36,7 @@ class ProductCard(StrictModel):
     marca: str | None
     formato: str | None
     unidade_medida: str | None
-    volume_kg: str | None
+    peso_embalagem_kg: float | None
     imagem_url: str | None
 
 class RecommendationResponse(StrictModel):

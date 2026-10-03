@@ -181,11 +181,12 @@ class FirebaseService:
         if data.get('disponivelNoJogo') is not True:
             raise ServiceError('PRODUCT_NOT_AVAILABLE',422)
         original = data.get('dadosOriginais',{})
+        from recommendations import package_weight
         # Do not send margins, sales figures, suppliers or the player's identity to Groq.
         return dict(id=doc_id,nome=data['nome'],tiposProduto=data.get('tiposProduto',[]),
                     ocasioes=data.get('ocasioes',[]),marca=original.get('Marca'),
                     formato=original.get('Formato'),unidade_medida=original.get('Unidade Medida'),
-                    volume_kg=original.get('Volume (KG)'))
+                    peso_embalagem_kg=package_weight(data['nome']))
 
     async def catalog(self,context=None):
         from recommendations import normalize
@@ -197,7 +198,7 @@ class FirebaseService:
             if not missing: return [record for facet in facets for record in self.catalog_cache[facet][1]]
             token = await self.access_token()
             fields = ['nome','codigo','disponivelNoJogo','tiposProduto','ocasioes','imagemSwift.url',
-                      'dadosOriginais.Marca','dadosOriginais.Formato','dadosOriginais.Unidade Medida','dadosOriginais.Volume (KG)']
+                      'dadosOriginais.Marca','dadosOriginais.Formato','dadosOriginais.Unidade Medida']
             async def query_facet(facet):
                 # The admin panel synchronizes SIM/NÃO flags with types and occasions.
                 # Equality-index merging avoids a full catalog scan or new composite indexes.

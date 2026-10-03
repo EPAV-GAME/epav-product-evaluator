@@ -19,6 +19,14 @@ def image_url(value):
     return value if isinstance(value, str) and re.fullmatch(
         r'https://epav-swift-images\.kevinernandes2012\.workers\.dev/images/swift/[a-f0-9]{64}\.webp', value) else None
 
+def package_weight(name):
+    # The spreadsheet's Volume (KG) is aggregate sales volume, not package weight.
+    matches = re.findall(r'(?<![\w.,])(\d+(?:[.,]\d+)?)\s*(KG|G)\b', str(name).upper())
+    if len(matches) != 1: return None
+    number, unit = matches[0]
+    weight = float(number.replace(',', '.')) / (1000 if unit == 'G' else 1)
+    return weight if 0 < weight <= 30 else None
+
 def public_product(doc_id, data):
     original = data.get('dadosOriginais') or {}
     def field(key):
@@ -28,7 +36,7 @@ def public_product(doc_id, data):
                 tiposProduto=[str(v)[:60] for v in data.get('tiposProduto', [])][:6],
                 ocasioes=[str(v)[:60] for v in data.get('ocasioes', [])][:8],
                 marca=field('Marca'), formato=field('Formato'), unidade_medida=field('Unidade Medida'),
-                volume_kg=field('Volume (KG)'), imagem_url=image_url((data.get('imagemSwift') or {}).get('url')))
+                peso_embalagem_kg=package_weight(data.get('nome', '')), imagem_url=image_url((data.get('imagemSwift') or {}).get('url')))
 
 def select_products(context, records):
     # Only the official profile and already revealed facts/falas contribute to retrieval.
