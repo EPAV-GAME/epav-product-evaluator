@@ -6,10 +6,11 @@ from fastapi import FastAPI,HTTPException,Request,Security
 from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from models import EvaluationRequest,EvaluationResponse
+from models import EvaluationRequest,EvaluationResponse,RecommendationRequest,RecommendationResponse
 from context import build_context,ContextError
 from evaluator import final_result,provider_payload,RUBRIC_VERSION
 from services import cached_services,ServiceError
+from recommendations import recommendation_context,select_products
 
 CONFIG_NAMES = ['GROQ_API_KEYS','GROQ_MODEL','FIREBASE_SERVICE_ACCOUNT_JSON','FIREBASE_WEB_API_KEY','ALLOWED_ORIGINS']
 
@@ -37,12 +38,39 @@ class BodyLimit:
             return messages.pop(0) if messages else await receive()
         await self.app(scope,replay,send)
 
-app=FastAPI(title='EPAV — Avaliação de produtos',version='1.0.0',
+app=FastAPI(title='EPAV — Avaliação de produtos',version='1.1.0',
             description='Avaliação pedagógica de adequação: 0 a 1000, usando cenários oficiais e catálogo Firebase.')
 app.add_middleware(BodyLimit)
 app.add_middleware(CORSMiddleware,allow_origins=['https://epav-game.github.io'],
                    allow_methods=['GET','POST'],allow_headers=['Authorization','Content-Type'])
 bearer=HTTPBearer(auto_error=False,description='ID token Firebase do projeto epav-game.')
+
+async def authorize(request,credentials,config):
+    if request.headers.get('origin') and request.headers['origin'] not in config.get('ALLOWED_ORIGINS','').split(','):
+        raise HTTPException(403,'ORIGIN_NOT_ALLOWED')
+    if credentials is None or not 20 <= len(credentials.credentials) <= 4096:
+        raise HTTPException(401,'FIREBASE_TOKEN_REQUIRED')
+    from services import cached_firebase
+    firebase = cached_firebase(config)
+    uid = await firebase.authenticate(credentials.credentials)
+    env = request.scope.get('env')
+    if env is not None:
+        for name,key in [('IP_LIMIT',request.headers.get('cf-connecting-ip','unknown')),('USER_LIMIT',uid),('GLOBAL_LIMIT','evaluations')]:
+            result=await getattr(env,name).limit({'key':key})
+            if not result.success: raise ServiceError('RATE_LIMITED',429,60)
+    return firebase
+
+@app.post('/v1/recomendacoes',response_model=RecommendationResponse)
+async def recommendations(choice:RecommendationRequest,request:Request,credentials:HTTPAuthorizationCredentials|None=Security(bearer)):
+    try:
+        async with asyncio.timeout(40):
+            firebase = await authorize(request,credentials,config_for(request))
+            context = recommendation_context(choice)
+            return select_products(context,await firebase.catalog(context))
+    except ContextError as error:
+        raise HTTPException(422,str(error)) from None
+    except TimeoutError:
+        raise ServiceError('CATALOG_TIMEOUT',503,30) from None
 
 @app.exception_handler(ServiceError)
 async def service_error(request,error):

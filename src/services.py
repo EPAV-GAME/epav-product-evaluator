@@ -132,6 +132,8 @@ class FirebaseService:
         self.web_key,self.transport = web_key,transport
         self.account_raw = account_raw
         self.token,self.expires = '',0
+        self.catalog_cache = {}
+        self.catalog_lock = asyncio.Lock()
 
     async def authenticate(self,id_token):
         response = await self.transport('https://identitytoolkit.googleapis.com/v1/accounts:lookup?key='+self.web_key,payload={'idToken':id_token})
@@ -171,6 +173,8 @@ class FirebaseService:
         response = await self.transport(url,method='GET',headers={'Authorization':'Bearer '+token})
         if response.status==404:
             raise ServiceError('PRODUCT_NOT_FOUND',404)
+        if response.status==429:
+            raise ServiceError('CATALOG_QUOTA_EXCEEDED',503,3600)
         if response.status!=200:
             raise ServiceError('CATALOG_UNAVAILABLE')
         data = {k:decode(v) for k,v in response.json().get('fields',{}).items()}
@@ -183,6 +187,37 @@ class FirebaseService:
                     formato=original.get('Formato'),unidade_medida=original.get('Unidade Medida'),
                     volume_kg=original.get('Volume (KG)'))
 
+    async def catalog(self,context=None):
+        from recommendations import normalize
+        text = normalize((context or {}).get('cliente',{}).get('perfil',''))
+        occasion = 'Churrasco' if 'churrasco' in text else 'Praticidade' if any(w in text for w in ['pressa','pratic']) else 'Dia a dia'
+        facets = ['Carnes','Aves','Pescados',occasion]
+        async with self.catalog_lock:
+            missing = [facet for facet in facets if self.catalog_cache.get(facet,(0,[]))[0] <= time.time()]
+            if not missing: return [record for facet in facets for record in self.catalog_cache[facet][1]]
+            token = await self.access_token()
+            fields = ['nome','codigo','disponivelNoJogo','tiposProduto','ocasioes','imagemSwift.url',
+                      'dadosOriginais.Marca','dadosOriginais.Formato','dadosOriginais.Unidade Medida','dadosOriginais.Volume (KG)']
+            async def query_facet(facet):
+                # The admin panel synchronizes SIM/NÃO flags with types and occasions.
+                # Equality-index merging avoids a full catalog scan or new composite indexes.
+                query = {'from':[{'collectionId':'produtos_swift'}],
+                     'select':{'fields':[{'fieldPath':'.'.join('`'+part+'`' for part in field.split('.'))} for field in fields]},
+                     'where':{'compositeFilter':{'op':'AND','filters':[
+                         {'fieldFilter':{'field':{'fieldPath':'disponivelNoJogo'},'op':'EQUAL','value':{'booleanValue':True}}},
+                         {'fieldFilter':{'field':{'fieldPath':'`dadosOriginais`.`'+facet+'`'},'op':'EQUAL','value':{'stringValue':'SIM'}}}]}},
+                     'orderBy':[{'field':{'fieldPath':'__name__'},'direction':'ASCENDING'}], 'limit':150}
+                response = await self.transport('https://firestore.googleapis.com/v1/projects/epav-game/databases/(default)/documents:runQuery',
+                    headers={'Authorization':'Bearer '+token},payload={'structuredQuery':query})
+                if response.status == 429: raise ServiceError('CATALOG_QUOTA_EXCEEDED',503,3600)
+                if response.status != 200: raise ServiceError('CATALOG_UNAVAILABLE')
+                docs = [item['document'] for item in response.json() if 'document' in item]
+                records = [(doc['name'].rsplit('/',1)[-1], {k:decode(v) for k,v in doc.get('fields',{}).items()}) for doc in docs]
+                return facet, records
+            for facet, records in await asyncio.gather(*(query_facet(facet) for facet in missing)):
+                self.catalog_cache[facet] = time.time()+3600, records
+            return [record for facet in facets for record in self.catalog_cache[facet][1]]
+
 _pools = {}
 _firebase = {}
 
@@ -192,9 +227,12 @@ def cached_services(config):
     if fingerprint not in _pools:
         _pools.clear()
         _pools[fingerprint] = GroqPool(raw)
+    return _pools[fingerprint],cached_firebase(config)
+
+def cached_firebase(config):
     account = config.get('FIREBASE_SERVICE_ACCOUNT_JSON','')
     firebase_id = hashlib.sha256((config.get('FIREBASE_WEB_API_KEY','')+account).encode()).hexdigest()
     if firebase_id not in _firebase:
         _firebase.clear()
         _firebase[firebase_id] = FirebaseService(config.get('FIREBASE_WEB_API_KEY',''),account)
-    return _pools[fingerprint],_firebase[firebase_id]
+    return _firebase[firebase_id]

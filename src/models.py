@@ -22,6 +22,30 @@ class EvaluationRequest(StrictModel):
     quantidade: Quantity | None = None
     observacao_jogador: str = Field(default='', max_length=600)
 
+class RecommendationRequest(StrictModel):
+    cliente_id: Identifier
+    no_atual: Identifier
+    historico: list[Decision] = Field(default_factory=list, max_length=40)
+
+class ProductCard(StrictModel):
+    id: str
+    codigo: str
+    nome: str
+    tiposProduto: list[str]
+    ocasioes: list[str]
+    marca: str | None
+    formato: str | None
+    unidade_medida: str | None
+    volume_kg: str | None
+    imagem_url: str | None
+
+class RecommendationResponse(StrictModel):
+    cliente_id: str
+    no_atual: str
+    produtos: list[ProductCard] = Field(min_length=3, max_length=3)
+    ficha_escuta: list[str]
+    orientacao: str
+
 class Criterion(StrictModel):
     nota: int = Field(ge=0, le=100, strict=True)
     justificativa: str = Field(min_length=1, max_length=400)

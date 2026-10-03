@@ -69,6 +69,14 @@ Todas indisponíveis: HTTP 503 com `Retry-After`, sem pontuação inventada. Res
 
 ## Segurança e limites
 
+### Três produtos para a etapa de recomendação
+
+`POST /v1/recomendacoes` aceita `{cliente_id, no_atual, historico}` e exige o mesmo token Firebase da avaliação. Etapas válidas: cliente1/d3, cliente2/d5, cliente3/d7, cliente4/d6 e cliente5/d7. O servidor valida a sequência oficial e retorna exatamente três alimentos diferentes disponíveis no jogo, a ficha de escuta e fichas públicas com nome, código, tipos, ocasiões, marca, formato, unidade, peso e URL de foto quando disponível.
+
+A recuperação usa consultas limitadas de até 150 registros por categoria/ocasião, com cache por uma hora, filtrando `disponivelNoJogo=true` e os indicadores SIM/NÃO sincronizados pelo painel admin. Consultas de igualdade aproveitam índices existentes. A seleção considera o perfil e as falas reveladas, remove duplicações por código/nome e varia a ordem dos cartões. Não consome tokens Groq, não oferece uma nota antecipada nem expõe os dados comerciais. A avaliação final continua em `/v1/avaliacoes`, lendo novamente o produto no Firebase para conferir disponibilidade e avaliar a quantidade escolhida.
+
+O Worker Python usa as APIs oficiais Google com a conta de serviço guardada em segredo. Não é necessário instalar bibliotecas gRPC do Firebase Admin SDK no runtime do Cloudflare, nem liberar leitura pública da coleção.
+
 Chaves ficam apenas no Cloudflare, fora do GitHub e do navegador. A credencial Firebase é usada para leitura. O cliente precisa estar autenticado; há limites Cloudflare por jogador (15/min), IP (30/min) e serviço (120/min). Os limites são aproximados por localização Cloudflare. Requisições têm até 32 KiB e até 40 decisões; avaliação tem prazo total de 40 segundos. CORS permite o domínio do jogo. A API não registra tokens, chaves ou respostas completas do provedor.
 
 ## Implantação
