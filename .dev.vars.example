@@ -1,0 +1,2 @@
+GROQ_API_KEYS=gsk_CHAVE1|gsk_CHAVE2|gsk_CHAVE3
+FIREBASE_SERVICE_ACCOUNT_JSON={"project_id":"epav-game","client_email":"...","private_key":"..."}
