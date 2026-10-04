@@ -67,7 +67,7 @@ class SharedCache:
             return None
         value = json.loads(entry['value'])
         remaining = max(0, entry['ttl_ms'] / 1000 - (time.monotonic() - started))
-        self.remember(key, value, min(5, remaining))
+        self.remember(key, value, min(30, remaining))
         return value
 
     async def check_quota(self):
@@ -128,7 +128,7 @@ class SharedCache:
                         await self.invoke('set', key=key, value=json.dumps(value, separators=(',', ':')), ttl=ttl)
                     except OSError:
                         pass
-                    self.remember(key, value, max(0, min(5, ttl - (time.monotonic() - started))))
+                    self.remember(key, value, max(0, min(30, ttl - (time.monotonic() - started))))
                     return value
                 finally:
                     try:

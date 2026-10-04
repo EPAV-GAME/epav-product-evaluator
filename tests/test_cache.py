@@ -38,6 +38,20 @@ class CacheEndpointTest(unittest.TestCase):
 
 
 class CacheTest(unittest.IsolatedAsyncioTestCase):
+    async def test_memory_reuses_catalog_beyond_five_seconds_but_rechecks_generation(self):
+        clock=[100.0]
+        backend=MemoryRedis();cache=SharedCache(backend);loader=AsyncMock(return_value=['old'])
+        with patch('cache.time.monotonic',side_effect=lambda:clock[0]),patch.object(backend,'invoke',wraps=backend.invoke) as calls:
+            await cache.get_or_load('facet:photos',900,loader)
+            reads=sum(call.args[0]=='read' for call in calls.call_args_list)
+            clock[0]+=8
+            self.assertEqual(await cache.get_or_load('facet:photos',900,loader),['old'])
+            self.assertEqual(sum(call.args[0]=='read' for call in calls.call_args_list),reads)
+            await backend.invoke('invalidate');clock[0]+=6
+            loader.return_value=['new']
+            self.assertEqual(await cache.get_or_load('facet:photos',900,loader),['new'])
+        self.assertEqual(loader.call_count,2)
+
     async def test_shared_quota_backoff_keeps_warm_data_but_stops_new_reads(self):
         backend=MemoryRedis()
         first=SharedCache(backend)

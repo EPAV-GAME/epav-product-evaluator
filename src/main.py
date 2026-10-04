@@ -2,7 +2,8 @@ import asyncio
 import os
 import json
 import traceback
-from fastapi import FastAPI,HTTPException,Request,Security
+import time
+from fastapi import FastAPI,HTTPException,Request,Response,Security
 from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,11 +41,12 @@ class BodyLimit:
             return messages.pop(0) if messages else await receive()
         await self.app(scope,replay,send)
 
-app=FastAPI(title='EPAV — Avaliação de produtos',version='1.2.0',
+app=FastAPI(title='EPAV — Avaliação de produtos',version='1.3.0',
             description='Avaliação pedagógica de adequação: 0 a 1000, usando cenários oficiais e catálogo Firebase.')
 app.add_middleware(BodyLimit)
 app.add_middleware(CORSMiddleware,allow_origins=['https://epav-game.github.io'],
-                   allow_methods=['GET','POST'],allow_headers=['Authorization','Content-Type'])
+                   allow_methods=['GET','POST'],allow_headers=['Authorization','Content-Type'],
+                   expose_headers=['Server-Timing'],max_age=3600)
 bearer=HTTPBearer(auto_error=False,description='ID token Firebase do projeto epav-game.')
 
 async def authorize(request,credentials,config):
@@ -63,12 +65,16 @@ async def authorize(request,credentials,config):
     return firebase
 
 @app.post('/v1/recomendacoes',response_model=RecommendationResponse)
-async def recommendations(choice:RecommendationRequest,request:Request,credentials:HTTPAuthorizationCredentials|None=Security(bearer)):
+async def recommendations(choice:RecommendationRequest,request:Request,response:Response,credentials:HTTPAuthorizationCredentials|None=Security(bearer)):
     try:
         async with asyncio.timeout(40):
+            started = time.monotonic()
             firebase = await authorize(request,credentials,config_for(request))
+            authenticated = time.monotonic()
             context = recommendation_context(choice)
-            return select_products(context,await firebase.catalog(context))
+            result = select_products(context,await firebase.catalog(context))
+            response.headers['Server-Timing'] = f'auth;dur={(authenticated-started)*1000:.1f}, catalog;dur={(time.monotonic()-authenticated)*1000:.1f}'
+            return result
     except ContextError as error:
         raise HTTPException(422,str(error)) from None
     except TimeoutError:
@@ -83,7 +89,7 @@ async def service_error(request,error):
 async def health(request:Request):
     config=config_for(request)
     return dict(service='epav-product-evaluator',configured=bool(config['GROQ_API_KEYS'] and config['FIREBASE_SERVICE_ACCOUNT_JSON']),versao_rubrica=RUBRIC_VERSION, cache_configured=config.get('CACHE_BINDING') is not None,
-                selecao_produtos='parametros_e_sorteio_sem_ia')
+                selecao_produtos='parametros_e_sorteio_sem_ia',produtos_com_imagem=True)
 
 @app.get('/v1/ranking')
 async def ranking(request:Request):

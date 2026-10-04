@@ -71,7 +71,9 @@ Todas indisponíveis: HTTP 503 com `Retry-After`, sem pontuação inventada. Res
 
 ### Três produtos para a etapa de recomendação
 
-`POST /v1/recomendacoes` aceita `{cliente_id, no_atual, historico}` e exige o mesmo token Firebase da avaliação. Etapas válidas: cliente1/d3, cliente2/d5, cliente3/d7, cliente4/d6 e cliente5/d7. O servidor valida a sequência oficial e retorna exatamente três alimentos diferentes disponíveis no jogo, a ficha de escuta e fichas públicas com nome, código, tipos, ocasiões, marca, formato, unidade, peso e URL de foto quando disponível.
+`POST /v1/recomendacoes` aceita `{cliente_id, no_atual, historico}` e exige o mesmo token Firebase da avaliação. Etapas válidas: cliente1/d3, cliente2/d5, cliente3/d7, cliente4/d6 e cliente5/d7. O servidor valida a sequência oficial e retorna exatamente três alimentos diferentes disponíveis no jogo e com URL válida de foto no bucket Swift, a ficha de escuta e fichas públicas com nome, código, tipos, ocasiões, marca, formato, unidade e peso. Se houver menos de três alimentos compatíveis com foto, retorna `INSUFFICIENT_PRODUCTS`, sem completar com itens sem imagem.
+
+O catálogo Redis guarda somente candidatos com foto por 15 minutos, com chave própria de versão. A consulta lê páginas de 150 registros, continuando se os primeiros itens não tiverem foto; para quando há pelo menos 12 nomes distintos por perfil dessa ocasião, ao terminar a consulta ou após 10 páginas. Não exige novos índices. O cache local reutiliza esses dados por até 30 segundos, limitado pelo TTL restante, e continua conferindo invalidação a cada 5 segundos. A resposta inclui `Server-Timing` com tempos de autenticação e catálogo, sem credenciais. A preparação feita pelo jogo enquanto exibe a fala não usa Groq.
 
 `peso_embalagem_kg` é extraído apenas de uma indicação explícita em gramas ou quilos na descrição (ex.: `700G`, `1KG`). Fica nulo quando o peso não está claro. O campo comercial `Volume (KG)` representa volume agregado e não é apresentado ao jogador nem enviado à IA.
 

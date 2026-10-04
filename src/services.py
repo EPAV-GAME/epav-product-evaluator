@@ -197,7 +197,7 @@ class FirebaseService:
                     peso_embalagem_kg=package_weight(data['nome']))
 
     async def catalog(self,context=None):
-        from recommendations import product_parameters
+        from recommendations import product_parameters, PRODUCT_PARAMETERS, normalize
         occasion = product_parameters(context)['ocasiao'] if context is not None else 'Dia a dia'
         # The occasion query already returns all product types; no extra type scans.
         facets = [occasion]
@@ -211,25 +211,35 @@ class FirebaseService:
                      {'fieldFilter':{'field':{'fieldPath':'disponivelNoJogo'},'op':'EQUAL','value':{'booleanValue':True}}},
                      {'fieldFilter':{'field':{'fieldPath':'`dadosOriginais`.`'+facet+'`'},'op':'EQUAL','value':{'stringValue':'SIM'}}}]}},
                  'orderBy':[{'field':{'fieldPath':'__name__'},'direction':'ASCENDING'}], 'limit':150}
-            response = await self.transport('https://firestore.googleapis.com/v1/projects/epav-game/databases/(default)/documents:runQuery',
-                headers={'Authorization':'Bearer '+token},payload={'structuredQuery':query})
-            if response.status == 429: raise ServiceError('CATALOG_QUOTA_EXCEEDED',503,3600)
-            if response.status != 200: raise ServiceError('CATALOG_UNAVAILABLE')
             from recommendations import public_product
             records = []
-            for item in response.json():
-                if 'document' not in item: continue
-                doc = item['document']; doc_id = doc['name'].rsplit('/',1)[-1]
-                data = {k:decode(v) for k,v in doc.get('fields',{}).items()}
-                card = public_product(doc_id, data)
-                # Project again before Redis: even a faulty upstream cannot cache commercial fields.
-                records.append([doc_id, dict(nome=card['nome'],codigo=card['codigo'],
-                    disponivelNoJogo=data.get('disponivelNoJogo') is True,
-                    tiposProduto=card['tiposProduto'],ocasioes=card['ocasioes'],
-                    imagemSwift={'url':card['imagem_url']},dadosOriginais={
-                        'Marca':card['marca'],'Formato':card['formato'],'Unidade Medida':card['unidade_medida']})])
+            profiles = {p['tipos'] for p in PRODUCT_PARAMETERS.values() if p['ocasiao'] == facet}
+            for page in range(10):
+                response = await self.transport('https://firestore.googleapis.com/v1/projects/epav-game/databases/(default)/documents:runQuery',
+                    headers={'Authorization':'Bearer '+token},payload={'structuredQuery':dict(query)})
+                if response.status == 429: raise ServiceError('CATALOG_QUOTA_EXCEEDED',503,3600)
+                if response.status != 200: raise ServiceError('CATALOG_UNAVAILABLE')
+                documents = [item['document'] for item in response.json() if 'document' in item]
+                for doc in documents:
+                    doc_id = doc['name'].rsplit('/',1)[-1]
+                    data = {k:decode(v) for k,v in doc.get('fields',{}).items()}
+                    card = public_product(doc_id, data)
+                    if data.get('disponivelNoJogo') is not True or not card['imagem_url'] or facet not in card['ocasioes']:
+                        continue
+                    # Redis receives only public fields and usable image URLs.
+                    records.append([doc_id, dict(nome=card['nome'],codigo=card['codigo'],
+                        disponivelNoJogo=True,tiposProduto=card['tiposProduto'],ocasioes=card['ocasioes'],
+                        imagemSwift={'url':card['imagem_url']},dadosOriginais={
+                            'Marca':card['marca'],'Formato':card['formato'],'Unidade Medida':card['unidade_medida']})])
+                # Continue past a prefix of foods without photos. Stop once every
+                # customer sharing this occasion has a varied compatible pool.
+                enough = all(len({normalize(data['nome']) for _, data in records
+                    if set(data['tiposProduto']) & set(types)}) >= 12 for types in profiles)
+                if len(documents) < 150 or enough:
+                    break
+                query['startAt'] = {'values':[{'referenceValue':documents[-1]['name']}], 'before':False}
             return records
-        records = await asyncio.gather(*(self.cache.get_or_load('facet:'+facet,900,
+        records = await asyncio.gather(*(self.cache.get_or_load('facet:photos:v2:'+facet,900,
                                       lambda facet=facet: query_facet(facet)) for facet in facets))
         return [record for group in records for record in group]
 

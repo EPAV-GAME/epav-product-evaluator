@@ -61,12 +61,12 @@ def select_products(context, records, *, rng=None):
     for doc_id, data in records:
         if data.get('disponivelNoJogo') is not True or not data.get('nome'): continue
         product = public_product(doc_id, data)
+        if not product['imagem_url']: continue
         if parameters['ocasiao'] not in product['ocasioes']: continue
         if not any(t in parameters['tipos'] for t in product['tiposProduto']): continue
         candidates.append(product)
-    # Prefer an existing photo when choosing which duplicate row represents the food.
-    # All distinct compatible foods remain eligible for the random draw.
-    candidates.sort(key=lambda p: (not bool(p['imagem_url']), p['id']))
+    # Only distinct compatible foods with a validated bucket image enter the draw.
+    candidates.sort(key=lambda p: p['id'])
     pool, names, codes, identifiers = [], set(), set(), set()
     for product in candidates:
         name = normalize(product['nome'])
