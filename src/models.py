@@ -21,11 +21,19 @@ class EvaluationRequest(StrictModel):
     historico: list[Decision] = Field(default_factory=list, max_length=40)
     quantidade: Quantity | None = None
     observacao_jogador: str = Field(default='', max_length=600)
+    categoria: Literal['entrada', 'principal', 'acompanhamento', 'bebida', 'sobremesa'] | None = None
+    escolhas_anteriores: list['MenuSelection'] = Field(default_factory=list, max_length=4)
+
+class MenuSelection(StrictModel):
+    categoria: Literal['entrada', 'principal', 'acompanhamento', 'bebida', 'sobremesa']
+    produto_id: Identifier
+    quantidade: Quantity
 
 class RecommendationRequest(StrictModel):
     cliente_id: Identifier
     no_atual: Identifier
     historico: list[Decision] = Field(default_factory=list, max_length=40)
+    categoria: Literal['entrada', 'principal', 'acompanhamento', 'bebida', 'sobremesa'] | None = None
 
 class ProductCard(StrictModel):
     id: str
@@ -42,9 +50,12 @@ class ProductCard(StrictModel):
 class RecommendationResponse(StrictModel):
     cliente_id: str
     no_atual: str
-    produtos: list[ProductCard] = Field(min_length=3, max_length=3)
+    produtos: list[ProductCard] = Field(min_length=0, max_length=10)
     ficha_escuta: list[str]
     orientacao: str
+    categoria: Literal['entrada', 'principal', 'acompanhamento', 'bebida', 'sobremesa'] | None = None
+    total_disponiveis: int = 0
+    quantidade_solicitada: int = 3
 
 class Criterion(StrictModel):
     nota: int = Field(ge=0, le=100, strict=True)

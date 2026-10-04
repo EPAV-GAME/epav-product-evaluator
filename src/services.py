@@ -6,6 +6,7 @@ import re
 import sys
 import time
 import urllib.parse
+import zlib
 from dataclasses import dataclass
 import httpx
 from pydantic import ValidationError
@@ -25,7 +26,7 @@ class HTTPResult:
     def json(self):
         return json.loads(self.body)
 
-async def post_or_get(url, *, method='POST', headers=None, payload=None, form=None):
+async def post_or_get(url, *, method='POST', headers=None, payload=None, form=None, max_response_chars=256_000):
     headers = dict(headers or {})
     if payload is not None:
         headers['Content-Type'] = 'application/json'
@@ -45,7 +46,7 @@ async def post_or_get(url, *, method='POST', headers=None, payload=None, form=No
         async with httpx.AsyncClient(timeout=12, follow_redirects=False) as client:
             response = await client.request(method,url,headers=headers,content=body)
             result = HTTPResult(response.status_code,dict(response.headers),response.text)
-    if len(result.body) > 256_000:
+    if len(result.body) > max_response_chars:
         raise ServiceError('UPSTREAM_RESPONSE_TOO_LARGE',502)
     return result
 
@@ -82,6 +83,12 @@ class GroqPool:
                 continue
             if response.status != 200:
                 # Request/model errors cannot be solved by consuming more keys.
+                try:
+                    code=response.json().get('error',{}).get('code')
+                except (ValueError,TypeError,AttributeError):
+                    code=None
+                safe_code=code if code in {'json_validate_failed','model_not_found','invalid_api_key','context_length_exceeded'} else 'request_rejected'
+                print(json.dumps({'event':'groq_request_rejected','status':response.status,'code':safe_code}))
                 raise ServiceError('GROQ_REQUEST_REJECTED',502)
             try:
                 answer = response.json()['choices'][0]['message']['content']
@@ -197,6 +204,8 @@ class FirebaseService:
                     peso_embalagem_kg=package_weight(data['nome']))
 
     async def catalog(self,context=None):
+        if context and context.get('categoria_refeicao'):
+            return await self._menu_catalog()
         from recommendations import product_parameters, PRODUCT_PARAMETERS, normalize
         occasion = product_parameters(context)['ocasiao'] if context is not None else 'Dia a dia'
         # The occasion query already returns all product types; no extra type scans.
@@ -242,6 +251,48 @@ class FirebaseService:
         records = await asyncio.gather(*(self.cache.get_or_load('facet:photos:v2:'+facet,900,
                                       lambda facet=facet: query_facet(facet)) for facet in facets))
         return [record for group in records for record in group]
+
+    async def _menu_catalog(self):
+        from recommendations import public_product
+        fields = ['nome','codigo','disponivelNoJogo','tiposProduto','ocasioes','imagemSwift.url',
+                  'dadosOriginais.Marca','dadosOriginais.Formato','dadosOriginais.Unidade Medida']
+        async def load_catalog():
+            records, cursor = [], None
+            # A single shared lock/cache entry avoids Redis round trips for every page.
+            # Twelve pages cover the imported catalog while bounding Worker subrequests.
+            for _ in range(12):
+                query = {'from':[{'collectionId':'produtos_swift'}],
+                    'select':{'fields':[{'fieldPath':'.'.join('`'+p+'`' for p in field.split('.'))} for field in fields]},
+                    'where':{'fieldFilter':{'field':{'fieldPath':'disponivelNoJogo'},'op':'EQUAL','value':{'booleanValue':True}}},
+                    'orderBy':[{'field':{'fieldPath':'__name__'},'direction':'ASCENDING'}], 'limit':500}
+                if cursor: query['startAt']={'values':[{'referenceValue':cursor}],'before':False}
+                response=await self.transport('https://firestore.googleapis.com/v1/projects/epav-game/databases/(default)/documents:runQuery',
+                    headers={'Authorization':'Bearer '+await self.access_token()},payload={'structuredQuery':query},
+                    max_response_chars=2_000_000)
+                if response.status == 429: raise ServiceError('CATALOG_QUOTA_EXCEEDED',503,3600)
+                if response.status != 200: raise ServiceError('CATALOG_UNAVAILABLE')
+                documents=[item['document'] for item in response.json() if 'document' in item]
+                for doc in documents:
+                    doc_id=doc['name'].rsplit('/',1)[-1]
+                    data={k:decode(v) for k,v in doc.get('fields',{}).items()}
+                    card=public_product(doc_id,data)
+                    if data.get('disponivelNoJogo') is not True or not card['imagem_url'] or not card['nome']: continue
+                    records.append([doc_id,card['nome'],card['codigo'],card['tiposProduto'],card['ocasioes'],
+                        card['imagem_url'],card['marca'],card['formato'],card['unidade_medida']])
+                if len(documents)<500:
+                    # Public text/URLs have many repeated prefixes. Compression keeps the
+                    # whole catalog within the existing Redis value-size limit.
+                    raw=json.dumps(records,separators=(',',':')).encode()
+                    return base64.b64encode(zlib.compress(raw)).decode()
+                next_cursor=documents[-1]['name']
+                if next_cursor==cursor: raise ServiceError('CATALOG_PAGINATION_FAILED',503)
+                cursor=next_cursor
+            raise ServiceError('CATALOG_TOO_LARGE',503)
+        packed=await self.cache.get_or_load('menu:photos:v3:compact',900,load_catalog)
+        records=json.loads(zlib.decompress(base64.b64decode(packed)))
+        return [[doc_id,dict(nome=name,codigo=code,disponivelNoJogo=True,tiposProduto=types,ocasioes=occasions,
+            imagemSwift={'url':photo},dadosOriginais={'Marca':brand,'Formato':format_,'Unidade Medida':unit})]
+            for doc_id,name,code,types,occasions,photo,brand,format_,unit in records]
 
     async def ranking(self):
         return await self.cache.get_or_load('ranking:top20', 30, self._ranking)

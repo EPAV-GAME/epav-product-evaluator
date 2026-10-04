@@ -41,7 +41,7 @@ class BodyLimit:
             return messages.pop(0) if messages else await receive()
         await self.app(scope,replay,send)
 
-app=FastAPI(title='EPAV — Avaliação de produtos',version='1.4.0',
+app=FastAPI(title='EPAV — Avaliação de produtos',version='1.5.0',
             description='Avaliação pedagógica de adequação: 0 a 1000, usando cenários oficiais e catálogo Firebase.')
 app.add_middleware(BodyLimit)
 app.add_middleware(CORSMiddleware,allow_origins=['https://epav-game.github.io'],
@@ -89,7 +89,8 @@ async def service_error(request,error):
 async def health(request:Request):
     config=config_for(request)
     return dict(service='epav-product-evaluator',configured=bool(config['GROQ_API_KEYS'] and config['FIREBASE_SERVICE_ACCOUNT_JSON']),versao_rubrica=RUBRIC_VERSION, cache_configured=config.get('CACHE_BINDING') is not None,
-                selecao_produtos='parametros_e_sorteio_sem_ia',produtos_com_imagem=True)
+                selecao_produtos='parametros_e_sorteio_sem_ia',produtos_com_imagem=True,
+                cardapio_categorias=['entrada','principal','acompanhamento','bebida','sobremesa'],opcoes_por_categoria=10)
 
 @app.get('/v1/ranking')
 async def ranking(request:Request):
@@ -161,6 +162,10 @@ async def evaluate(choice:EvaluationRequest,request:Request,response:Response,cr
             stage='catalog'
             product=await firebase.product(choice.produto_id)
             context=build_context(choice,product)
+            if choice.categoria or choice.escolhas_anteriores:
+                from menu import selection_context, previous_context
+                context=selection_context(choice,context)
+                context['produtos_anteriores']=await previous_context(choice,firebase)
             catalogued = time.monotonic()
             model=config.get('GROQ_MODEL') or 'openai/gpt-oss-20b'
             stage='groq'

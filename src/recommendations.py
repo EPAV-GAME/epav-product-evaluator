@@ -28,9 +28,15 @@ def normalize(text):
     return ''.join(c for c in unicodedata.normalize('NFD', str(text).lower()) if unicodedata.category(c) != 'Mn')
 
 def recommendation_context(choice):
-    if STAGES.get(choice.cliente_id) != choice.no_atual:
+    if choice.categoria:
+        from menu import validate_stage
+        validate_stage(choice.cliente_id, choice.no_atual, choice.categoria)
+    elif STAGES.get(choice.cliente_id) != choice.no_atual:
         raise ContextError('Esta etapa não é uma recomendação de produtos.')
-    return build_context(EvaluationRequest(**choice.model_dump(), produto_id='catalogo'), {})
+    context = build_context(EvaluationRequest(**choice.model_dump(), produto_id='catalogo'), {})
+    if choice.categoria:
+        context['categoria_refeicao'] = choice.categoria
+    return context
 
 def image_url(value):
     return value if isinstance(value, str) and re.fullmatch(
@@ -57,13 +63,19 @@ def public_product(doc_id, data):
 
 def select_products(context, records, *, rng=None):
     parameters = product_parameters(context)
+    category = context.get('categoria_refeicao')
+    from menu import roles
     candidates = []
     for doc_id, data in records:
         if data.get('disponivelNoJogo') is not True or not data.get('nome'): continue
         product = public_product(doc_id, data)
         if not product['imagem_url']: continue
-        if parameters['ocasiao'] not in product['ocasioes']: continue
-        if not any(t in parameters['tipos'] for t in product['tiposProduto']): continue
+        if category:
+            if category not in roles(product): continue
+            if category == 'principal' and not set(parameters['tipos']) & set(product['tiposProduto']): continue
+        else:
+            if parameters['ocasiao'] not in product['ocasioes']: continue
+            if not any(t in parameters['tipos'] for t in product['tiposProduto']): continue
         candidates.append(product)
     # Only distinct compatible foods with a validated bucket image enter the draw.
     candidates.sort(key=lambda p: p['id'])
@@ -75,11 +87,17 @@ def select_products(context, records, *, rng=None):
         names.add(name); identifiers.add(product['id'])
         if code: codes.add(code)
         pool.append(product)
-    if len(pool) < 3:
+    if not category and len(pool) < 3:
         from services import ServiceError
         raise ServiceError('INSUFFICIENT_PRODUCTS',503)
     # Cache the candidate catalog, not the draw. Each request samples without replacement.
-    chosen = (rng if rng is not None else random.SystemRandom()).sample(pool, 3)
+    generator = rng if rng is not None else random.SystemRandom()
+    requested = 10 if category else 3
+    preferred = [p for p in pool if parameters['ocasiao'] in p['ocasioes']]
+    others = [p for p in pool if p not in preferred]
+    chosen = generator.sample(preferred, min(requested, len(preferred)))
+    chosen += generator.sample(others, min(requested-len(chosen), len(others)))
     return dict(cliente_id=context['cliente']['id'], no_atual=context['conversa'][-1]['id'],
                 produtos=chosen, ficha_escuta=list(context['ficha_escuta'].values()),
+                categoria=category, total_disponiveis=len(pool), quantidade_solicitada=requested,
                 orientacao='Compare as fichas com as necessidades do cliente. Confirme composição e restrições antes de recomendar.')

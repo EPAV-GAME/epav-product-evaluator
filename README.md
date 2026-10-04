@@ -61,7 +61,27 @@ Exemplo de corpo:
 }
 ```
 
-`no_atual` é a fala atual já vista. `historico` contém as decisões anteriores. Quantidade e observação são opcionais. O jogo integra a seleção de três produtos e a avaliação da escolha.
+`no_atual` é a fala atual já vista. `historico` contém as decisões anteriores. Quantidade e observação são opcionais. O jogo integra cinco etapas de refeição, com dez opções por categoria e avaliação da escolha.
+
+### Refeição construída durante o diálogo
+
+`POST /v1/recomendacoes` com `categoria` (`entrada`, `principal`, `acompanhamento`, `bebida` ou `sobremesa`) retorna até **10 produtos distintos com foto** naquela categoria. A ordem ocupa as últimas cinco falas do roteiro de cada cliente, intercalada com suas respostas originais:
+
+| Cliente | Entrada | Principal | Acompanhamento | Bebidas | Sobremesa |
+|---|---|---|---|---|---|
+| Lucas | d2 | d3 | d4 | d5 | d6 |
+| Marina | d3 | d4 | d5 | d6 | d7 |
+| Rafael | d4 | d5 | d6 | d7 | d8 |
+| Camila | d5 | d6 | d7 | d8 | d9 |
+| André | d6 | d7 | d8 | d9 | d10 |
+
+O papel na refeição é classificado por regras explícitas sobre tipo e nome do alimento, em `src/menu.py`; por exemplo, linguiça **com** queijo coalho continua sendo prato principal. A ocasião do cliente é priorizada, e o sorteio é completado apenas com alimentos reais do mesmo papel. O principal respeita os tipos do perfil. A seleção não chama a IA. Se o acervo tiver menos de dez candidatos, retorna os existentes com `total_disponiveis` e `quantidade_solicitada=10`; categoria vazia retorna `produtos=[]`, sem substituir por outro tipo de alimento.
+
+O catálogo completo é lido em páginas de 500 registros, com limite de 12 páginas. O conjunto de candidatos é compactado e compartilhado no Redis por até 15 minutos, usando uma única entrada e uma única trava para evitar excesso de chamadas por requisição no Cloudflare. As cinco categorias reutilizam esse catálogo e sorteiam suas opções separadamente. Só entram campos públicos e fotos do bucket validado; preços, margens e fornecedores não são incluídos.
+
+Na avaliação, envie a mesma `categoria` e `escolhas_anteriores: [{categoria, produto_id, quantidade}]`. O servidor valida a etapa, a ordem e a ausência de categorias repetidas/futuras, e busca as fichas anteriores no Firebase em paralelo. O modelo considera essas escolhas junto ao histórico original, sem cobrar novamente pontos das respostas do diálogo e sem julgar sobremesa ou bebida como se precisassem ser carne. IDs anteriores continuam sendo declarações do jogador, sem sessão de partida verificada no servidor. A avaliação ainda usa uma única chamada Groq por produto.
+
+Clientes antigos que omitem `categoria` continuam usando o contrato de três opções abaixo.
 
 ## Chaves Groq
 
