@@ -1,1 +1,1 @@
-{"name":"epav-product-evaluator","version":"1.0.0","private":true,"devDependencies":{"wrangler":"4.147.0"}}
+{"name":"epav-product-evaluator","version":"1.0.0","private":true,"devDependencies":{"wrangler":"4.147.0"},"dependencies":{"redis":"5.12.1"}}

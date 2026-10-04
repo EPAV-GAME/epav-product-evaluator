@@ -2,10 +2,15 @@
   "name": "epav-product-evaluator",
   "main": "src/main.py",
   "compatibility_date": "2026-10-03",
-  "compatibility_flags": ["python_workers"],
+  "compatibility_flags": [
+    "python_workers"
+  ],
   "workers_dev": true,
   "preview_urls": false,
-  "observability": {"enabled":true,"head_sampling_rate":1},
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
   "vars": {
     "FIREBASE_PROJECT_ID": "epav-game",
     "FIREBASE_WEB_API_KEY": "AIzaSyBcZXrUyCxxu-u5YIlrojR4iMUfazi8Mks",
@@ -13,8 +18,35 @@
     "ALLOWED_ORIGINS": "https://epav-game.github.io"
   },
   "ratelimits": [
-    {"name":"USER_LIMIT","namespace_id":"39356763555711","simple":{"limit":15,"period":60}},
-    {"name":"IP_LIMIT","namespace_id":"39356763555712","simple":{"limit":30,"period":60}},
-    {"name":"GLOBAL_LIMIT","namespace_id":"39356763555713","simple":{"limit":120,"period":60}}
+    {
+      "name": "USER_LIMIT",
+      "namespace_id": "39356763555711",
+      "simple": {
+        "limit": 15,
+        "period": 60
+      }
+    },
+    {
+      "name": "IP_LIMIT",
+      "namespace_id": "39356763555712",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    },
+    {
+      "name": "GLOBAL_LIMIT",
+      "namespace_id": "39356763555713",
+      "simple": {
+        "limit": 120,
+        "period": 60
+      }
+    }
+  ],
+  "services": [
+    {
+      "binding": "REDIS_CACHE",
+      "service": "epav-redis-cache"
+    }
   ]
 }

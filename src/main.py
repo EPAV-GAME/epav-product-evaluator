@@ -12,13 +12,15 @@ from evaluator import final_result,provider_payload,RUBRIC_VERSION
 from services import cached_services,ServiceError
 from recommendations import recommendation_context,select_products
 
-CONFIG_NAMES = ['GROQ_API_KEYS','GROQ_MODEL','FIREBASE_SERVICE_ACCOUNT_JSON','FIREBASE_WEB_API_KEY','ALLOWED_ORIGINS']
+CONFIG_NAMES = ['GROQ_API_KEYS','GROQ_MODEL','FIREBASE_SERVICE_ACCOUNT_JSON','FIREBASE_WEB_API_KEY','ALLOWED_ORIGINS','CACHE_INVALIDATION_TOKEN']
 
 def config_for(request):
     env = request.scope.get('env')
     if env is None:
         return {name:os.environ.get(name,'') for name in CONFIG_NAMES}
-    return {name:str(getattr(env,name,'')) for name in CONFIG_NAMES}
+    config={name:str(getattr(env,name,'')) for name in CONFIG_NAMES}
+    config['CACHE_BINDING']=getattr(env,'REDIS_CACHE',None)
+    return config
 
 class BodyLimit:
     def __init__(self,app): self.app=app
@@ -80,7 +82,49 @@ async def service_error(request,error):
 @app.get('/health')
 async def health(request:Request):
     config=config_for(request)
-    return dict(service='epav-product-evaluator',configured=bool(config['GROQ_API_KEYS'] and config['FIREBASE_SERVICE_ACCOUNT_JSON']),versao_rubrica=RUBRIC_VERSION)
+    return dict(service='epav-product-evaluator',configured=bool(config['GROQ_API_KEYS'] and config['FIREBASE_SERVICE_ACCOUNT_JSON']),versao_rubrica=RUBRIC_VERSION, cache_configured=config.get('CACHE_BINDING') is not None)
+
+@app.get('/v1/ranking')
+async def ranking(request:Request):
+    from services import cached_firebase
+    async with asyncio.timeout(40):
+        return {'resultados':await cached_firebase(config_for(request)).ranking(), 'cache_segundos':30}
+
+async def authorize_cache(request,credentials):
+    import hmac
+    from services import cached_firebase
+    config=config_for(request)
+    if request.headers.get('origin') and request.headers['origin'] not in config.get('ALLOWED_ORIGINS','').split(','):
+        raise HTTPException(403,'ORIGIN_NOT_ALLOWED')
+    if credentials is None or not 20 <= len(credentials.credentials) <= 4096:
+        raise HTTPException(401,'FIREBASE_TOKEN_REQUIRED')
+    firebase=cached_firebase(config)
+    secret=config.get('CACHE_INVALIDATION_TOKEN','')
+    if not (len(secret)>=32 and hmac.compare_digest(credentials.credentials,secret)):
+        await firebase.authenticate_admin(credentials.credentials)
+    return firebase
+
+@app.post('/v1/cache/invalidate')
+async def invalidate_cache(request:Request,credentials:HTTPAuthorizationCredentials|None=Security(bearer)):
+    firebase=await authorize_cache(request,credentials)
+    try: await firebase.cache.invalidate()
+    except OSError: raise ServiceError('CACHE_UNAVAILABLE',503,30) from None
+    return {'invalidado':True,'propagacao_maxima_segundos':5}
+
+@app.get('/v1/cache/status')
+async def cache_status(request:Request,credentials:HTTPAuthorizationCredentials|None=Security(bearer)):
+    import uuid
+    firebase=await authorize_cache(request,credentials)
+    key='probe:'+uuid.uuid4().hex
+    value=uuid.uuid4().hex
+    try:
+        reachable=bool(await firebase.cache.invoke('ping'))
+        await firebase.cache.invoke('claim',key=key,value=value,ttl=10)
+        entry=await firebase.cache.invoke('read',key=key)
+        reachable=reachable and entry['value']==value and entry['ttl_ms']>0
+        await firebase.cache.invoke('release',key=key,value=value)
+    except OSError: reachable=False
+    return {'redis_disponivel':reachable,'catalogo_ttl':900,'produto_ttl':60,'ranking_ttl':30}
 
 @app.post('/v1/avaliacoes',response_model=EvaluationResponse)
 async def evaluate(choice:EvaluationRequest,request:Request,credentials:HTTPAuthorizationCredentials|None=Security(bearer)):

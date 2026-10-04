@@ -1,0 +1,15 @@
+{
+  "name": "epav-redis-cache",
+  "main": "index.mjs",
+  "compatibility_date": "2026-10-03",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {"enabled": true},
+  "vars": {
+    "REDIS_HOST": "cracker-mint-mind-86945.db.redis.io",
+    "REDIS_PORT": "16746",
+    "REDIS_USERNAME": "default",
+    "REDIS_TLS": "false"
+  }
+}

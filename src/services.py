@@ -128,12 +128,13 @@ def decode(value):
     return next(iter(value.values()))
 
 class FirebaseService:
-    def __init__(self,web_key,account_raw,transport=post_or_get):
+    def __init__(self,web_key,account_raw,transport=post_or_get,cache=None):
         self.web_key,self.transport = web_key,transport
         self.account_raw = account_raw
         self.token,self.expires = '',0
-        self.catalog_cache = {}
-        self.catalog_lock = asyncio.Lock()
+        self.token_lock = asyncio.Lock()
+        from cache import SharedCache
+        self.cache = cache or SharedCache()
 
     async def authenticate(self,id_token):
         response = await self.transport('https://identitytoolkit.googleapis.com/v1/accounts:lookup?key='+self.web_key,payload={'idToken':id_token})
@@ -150,6 +151,10 @@ class FirebaseService:
             raise ServiceError('AUTH_INVALID',401) from None
 
     async def access_token(self):
+        async with self.token_lock:
+            return await self._access_token()
+
+    async def _access_token(self):
         if time.time()<self.expires-60:
             return self.token
         try:
@@ -168,6 +173,9 @@ class FirebaseService:
             raise ServiceError('CATALOG_CREDENTIALS_NOT_CONFIGURED') from None
 
     async def product(self,doc_id):
+        return await self.cache.get_or_load("product:"+doc_id, 60, lambda: self._product(doc_id))
+
+    async def _product(self,doc_id):
         token = await self.access_token()
         url = 'https://firestore.googleapis.com/v1/projects/epav-game/databases/(default)/documents/produtos_swift/'+urllib.parse.quote(doc_id,safe='')
         response = await self.transport(url,method='GET',headers={'Authorization':'Bearer '+token})
@@ -193,31 +201,68 @@ class FirebaseService:
         text = normalize((context or {}).get('cliente',{}).get('perfil',''))
         occasion = 'Churrasco' if 'churrasco' in text else 'Praticidade' if any(w in text for w in ['pressa','pratic']) else 'Dia a dia'
         facets = ['Carnes','Aves','Pescados',occasion]
-        async with self.catalog_lock:
-            missing = [facet for facet in facets if self.catalog_cache.get(facet,(0,[]))[0] <= time.time()]
-            if not missing: return [record for facet in facets for record in self.catalog_cache[facet][1]]
+        fields = ['nome','codigo','disponivelNoJogo','tiposProduto','ocasioes','imagemSwift.url',
+                  'dadosOriginais.Marca','dadosOriginais.Formato','dadosOriginais.Unidade Medida']
+        async def query_facet(facet):
             token = await self.access_token()
-            fields = ['nome','codigo','disponivelNoJogo','tiposProduto','ocasioes','imagemSwift.url',
-                      'dadosOriginais.Marca','dadosOriginais.Formato','dadosOriginais.Unidade Medida']
-            async def query_facet(facet):
-                # The admin panel synchronizes SIM/NÃO flags with types and occasions.
-                # Equality-index merging avoids a full catalog scan or new composite indexes.
-                query = {'from':[{'collectionId':'produtos_swift'}],
-                     'select':{'fields':[{'fieldPath':'.'.join('`'+part+'`' for part in field.split('.'))} for field in fields]},
-                     'where':{'compositeFilter':{'op':'AND','filters':[
-                         {'fieldFilter':{'field':{'fieldPath':'disponivelNoJogo'},'op':'EQUAL','value':{'booleanValue':True}}},
-                         {'fieldFilter':{'field':{'fieldPath':'`dadosOriginais`.`'+facet+'`'},'op':'EQUAL','value':{'stringValue':'SIM'}}}]}},
-                     'orderBy':[{'field':{'fieldPath':'__name__'},'direction':'ASCENDING'}], 'limit':150}
-                response = await self.transport('https://firestore.googleapis.com/v1/projects/epav-game/databases/(default)/documents:runQuery',
-                    headers={'Authorization':'Bearer '+token},payload={'structuredQuery':query})
-                if response.status == 429: raise ServiceError('CATALOG_QUOTA_EXCEEDED',503,3600)
-                if response.status != 200: raise ServiceError('CATALOG_UNAVAILABLE')
-                docs = [item['document'] for item in response.json() if 'document' in item]
-                records = [(doc['name'].rsplit('/',1)[-1], {k:decode(v) for k,v in doc.get('fields',{}).items()}) for doc in docs]
-                return facet, records
-            for facet, records in await asyncio.gather(*(query_facet(facet) for facet in missing)):
-                self.catalog_cache[facet] = time.time()+3600, records
-            return [record for facet in facets for record in self.catalog_cache[facet][1]]
+            query = {'from':[{'collectionId':'produtos_swift'}],
+                 'select':{'fields':[{'fieldPath':'.'.join('`'+part+'`' for part in field.split('.'))} for field in fields]},
+                 'where':{'compositeFilter':{'op':'AND','filters':[
+                     {'fieldFilter':{'field':{'fieldPath':'disponivelNoJogo'},'op':'EQUAL','value':{'booleanValue':True}}},
+                     {'fieldFilter':{'field':{'fieldPath':'`dadosOriginais`.`'+facet+'`'},'op':'EQUAL','value':{'stringValue':'SIM'}}}]}},
+                 'orderBy':[{'field':{'fieldPath':'__name__'},'direction':'ASCENDING'}], 'limit':150}
+            response = await self.transport('https://firestore.googleapis.com/v1/projects/epav-game/databases/(default)/documents:runQuery',
+                headers={'Authorization':'Bearer '+token},payload={'structuredQuery':query})
+            if response.status == 429: raise ServiceError('CATALOG_QUOTA_EXCEEDED',503,3600)
+            if response.status != 200: raise ServiceError('CATALOG_UNAVAILABLE')
+            from recommendations import public_product
+            records = []
+            for item in response.json():
+                if 'document' not in item: continue
+                doc = item['document']; doc_id = doc['name'].rsplit('/',1)[-1]
+                data = {k:decode(v) for k,v in doc.get('fields',{}).items()}
+                card = public_product(doc_id, data)
+                # Project again before Redis: even a faulty upstream cannot cache commercial fields.
+                records.append([doc_id, dict(nome=card['nome'],codigo=card['codigo'],
+                    disponivelNoJogo=data.get('disponivelNoJogo') is True,
+                    tiposProduto=card['tiposProduto'],ocasioes=card['ocasioes'],
+                    imagemSwift={'url':card['imagem_url']},dadosOriginais={
+                        'Marca':card['marca'],'Formato':card['formato'],'Unidade Medida':card['unidade_medida']})])
+            return records
+        records = await asyncio.gather(*(self.cache.get_or_load('facet:'+facet,900,
+                                      lambda facet=facet: query_facet(facet)) for facet in facets))
+        return [record for group in records for record in group]
+
+    async def ranking(self):
+        return await self.cache.get_or_load('ranking:top20', 30, self._ranking)
+
+    async def _ranking(self):
+        fields = ['nome','pontos','qualidadeQuartos','satisfacao','tempoJogadoMs']
+        query = {'from':[{'collectionId':'ranking'}],
+                 'select':{'fields':[{'fieldPath':field} for field in fields]},
+                 'orderBy':[{'field':{'fieldPath':'pontos'},'direction':'DESCENDING'},
+                            {'field':{'fieldPath':'tempoJogadoMs'},'direction':'ASCENDING'}], 'limit':20}
+        response = await self.transport('https://firestore.googleapis.com/v1/projects/epav-game/databases/(default)/documents:runQuery',
+            headers={'Authorization':'Bearer '+await self.access_token()},payload={'structuredQuery':query})
+        if response.status == 429: raise ServiceError('CATALOG_QUOTA_EXCEEDED',503,3600)
+        if response.status != 200: raise ServiceError('CATALOG_UNAVAILABLE')
+        rows=[]
+        for item in response.json():
+            if 'document' not in item: continue
+            data={k:decode(v) for k,v in item['document'].get('fields',{}).items() if k in fields}
+            rows.append({field:data.get(field) for field in fields})
+        return rows
+
+    async def authenticate_admin(self,id_token):
+        response = await self.transport('https://identitytoolkit.googleapis.com/v1/accounts:lookup?key='+self.web_key,
+                                        payload={'idToken':id_token})
+        if response.status != 200: raise ServiceError('AUTH_INVALID',401)
+        try:
+            users=response.json()['users']
+            if len(users)!=1 or users[0].get('disabled') or json.loads(users[0].get('customAttributes','{}')).get('admin') is not True:
+                raise ServiceError('ADMIN_REQUIRED',403)
+        except (ValueError,KeyError,TypeError):
+            raise ServiceError('ADMIN_REQUIRED',403) from None
 
 _pools = {}
 _firebase = {}
@@ -235,5 +280,8 @@ def cached_firebase(config):
     firebase_id = hashlib.sha256((config.get('FIREBASE_WEB_API_KEY','')+account).encode()).hexdigest()
     if firebase_id not in _firebase:
         _firebase.clear()
-        _firebase[firebase_id] = FirebaseService(config.get('FIREBASE_WEB_API_KEY',''),account)
+        from cache import SharedCache, BindingBackend
+        binding=config.get('CACHE_BINDING')
+        _firebase[firebase_id] = FirebaseService(config.get('FIREBASE_WEB_API_KEY',''),account,
+                                               cache=SharedCache(BindingBackend(binding) if binding is not None else None))
     return _firebase[firebase_id]

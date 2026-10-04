@@ -19,5 +19,7 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci
+      - run: node --test cache-worker/cache.test.mjs
+      - run: npx wrangler deploy --config cache-worker/wrangler.jsonc --dry-run
       - name: Verificar bundle Python do Cloudflare
         run: uv run pywrangler deploy --dry-run

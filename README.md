@@ -75,7 +75,7 @@ Todas indisponíveis: HTTP 503 com `Retry-After`, sem pontuação inventada. Res
 
 `peso_embalagem_kg` é extraído apenas de uma indicação explícita em gramas ou quilos na descrição (ex.: `700G`, `1KG`). Fica nulo quando o peso não está claro. O campo comercial `Volume (KG)` representa volume agregado e não é apresentado ao jogador nem enviado à IA.
 
-A recuperação usa consultas limitadas de até 150 registros por categoria/ocasião, com cache por uma hora, filtrando `disponivelNoJogo=true` e os indicadores SIM/NÃO sincronizados pelo painel admin. Consultas de igualdade aproveitam índices existentes. A seleção considera o perfil e as falas reveladas, remove duplicações por código/nome e varia a ordem dos cartões. Não consome tokens Groq, não oferece uma nota antecipada nem expõe os dados comerciais. A avaliação final continua em `/v1/avaliacoes`, lendo novamente o produto no Firebase para conferir disponibilidade e avaliar a quantidade escolhida.
+A recuperação usa consultas limitadas de até 150 registros por categoria/ocasião, com cache Redis compartilhado por 15 minutos, filtrando `disponivelNoJogo=true` e os indicadores SIM/NÃO sincronizados pelo painel admin. Consultas de igualdade aproveitam índices existentes. A seleção considera o perfil e as falas reveladas, remove duplicações por código/nome e varia a ordem dos cartões. Não consome tokens Groq, não oferece uma nota antecipada nem expõe os dados comerciais. A avaliação final continua em `/v1/avaliacoes`, usando uma ficha pública com cache de até 60 segundos para conferir disponibilidade e avaliar a quantidade escolhida.
 
 O Worker Python usa as APIs oficiais Google com a conta de serviço guardada em segredo. Não é necessário instalar bibliotecas gRPC do Firebase Admin SDK no runtime do Cloudflare, nem liberar leitura pública da coleção.
 
@@ -108,3 +108,41 @@ node scripts/export_scenarios.mjs /caminho/epav-game/js/clientsData.js
 ```
 
 O GitHub Actions executa testes e verifica o bundle em cada push e PR. Implantação inicial usa o perfil Cloudflare autorizado localmente; CI não contém credenciais de implantação.
+
+## Cache Redis compartilhado
+
+O Worker privado `epav-redis-cache`, neste mesmo repositório, conecta a API FastAPI ao Redis Cloud pelo cliente oficial Node Redis. A API usa um service binding Cloudflare; o cache não tem URL pública, rotas públicas nem CORS. `REDIS_PASSWORD` fica exclusivamente nos segredos desse Worker. O endpoint fornecido usa TCP sem TLS; `REDIS_TLS=true` permite usar um endpoint Redis com TLS quando habilitado pelo proprietário.
+
+| Dados | Validade máxima |
+|---|---:|
+| Categorias e ocasiões do catálogo | 15 minutos |
+| Ficha do produto para avaliação | 60 segundos |
+| Top 20 do ranking público | 30 segundos |
+
+Somente campos públicos necessários ao jogo são armazenados. Autenticação, tokens Firebase, chaves Groq, e-mails, margens, fornecedores, auditoria e transações de edição/remoção ficam fora do cache. O ranking compartilha apenas as colunas já públicas, sem UID ou e-mail. Resultados e falhas da IA não são armazenados.
+
+Um lock Redis `SET NX EX` reúne consultas simultâneas da mesma chave entre instâncias. Cada lock tem um proprietário e é liberado por comparação atômica. As chaves têm namespace e versão próprios: nenhuma operação limpa outras aplicações do Redis. A expiração é automática; não há dependência de um job para remover dados antigos.
+
+Falha do Redis aciona um circuito de 30 segundos e uma consulta direta ao Firebase com cache local curto. Erros não viram produtos ou pontuações fictícias. Um Redis vazio ainda precisa de uma primeira leitura bem-sucedida do Firebase: ele não recupera uma cota já esgotada. Alterações externas que não invalidem o cache aparecem após o TTL.
+
+### Invalidação e integração
+
+- `GET /v1/ranking` retorna `{resultados, cache_segundos}` sem login, como as regras públicas existentes do ranking.
+- `POST /v1/cache/invalidate`: exige token Firebase de administrador, com claim conferida novamente, ou o segredo `CACHE_INVALIDATION_TOKEN` do bot. Troca a geração do cache; outras instâncias atualizam em até 5 segundos.
+- `GET /v1/cache/status`: exige a mesma autorização e testa a conexão, sem exibir credenciais.
+- O painel invalida depois de salvar um produto. O bot invalida ao terminar uma execução que mudou fotos, removeu ou restaurou registros, inclusive quando houve falha parcial.
+- Se a invalidação falhar, a alteração continua salva e o TTL limita a defasagem. O ranking atualizado aparece em até 30 segundos após uma publicação.
+
+Implantar o cache antes da API, na conta Cloudflare autorizada:
+
+```sh
+npm ci
+npx wrangler deploy --config cache-worker/wrangler.jsonc --profile epav
+npx wrangler secret put REDIS_PASSWORD --config cache-worker/wrangler.jsonc --profile epav
+uv run pywrangler secret put CACHE_INVALIDATION_TOKEN --profile epav
+uv run pywrangler deploy --profile epav
+```
+
+A chave de invalidação gerada deve ser configurada como segredo no GitHub Actions de `EPAV-GAME/epav-swift-images`. Nunca colocar a senha Redis ou essa chave no frontend, exemplos, arquivos versionados ou logs.
+
+Testes adicionais: `node --test cache-worker/cache.test.mjs`. Os testes Python cobrem cache entre instâncias, consultas simultâneas, expiração, invalidação, falha do Redis, disponibilidade de produtos e exclusão de dados privados.
