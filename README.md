@@ -14,7 +14,15 @@ API independente em **FastAPI**, hospedada em **Cloudflare Python Workers**, usa
 
 A IA dá notas de 0 a 100 por critério e cita evidências. A API valida as notas e calcula a soma ponderada. O resultado contém `score`, `percentual_adequacao`, classificação, justificativas, sugestão, informações faltantes, versão da rubrica e hash do contexto. O percentual representa adequação pedagógica; não é uma probabilidade estatística de acerto.
 
-Classificações: excelente ≥850, boa ≥650, parcial ≥400, inadequada <400. Contradição explícita entre restrição do cliente e fato confirmado do produto limita a nota a 200. Quantidade ausente recebe nota 50 nesse critério. Informações inexistentes não devem virar afirmações sobre preço, composição, alérgenos ou preparo.
+Classificações: excelente ≥850, boa ≥650, parcial ≥400, inadequada <400. A rubrica `epav-produto-v2` exige evidências do cliente e do produto para notas acima de 75. Respostas sem evidência ficam limitadas a 50. A ausência de dados representa uma confirmação pendente, sem atribuir um erro comprovado ao jogador.
+
+- Restrições alimentares sem detalhes/composição recebem 50; sem restrição alimentar declarada, esse critério recebe 100.
+- Preparo prioritário sem método/tempo confirmado limita praticidade a 75. Prioridades centrais de preparo, restrição ou orçamento ainda não confirmadas limitam necessidade a 75.
+- Quantidade ausente recebe 50. Unidades vezes peso explícito da embalagem são conferidos, com tolerância de 2% ou 10 g; divergência limita quantidade a 25. Peso consistente não comprova porções: refeições e acompanhamentos pendentes limitam esse critério a 75.
+- Tipo e ocasião incompatíveis com os parâmetros do atendimento limitam seus critérios a 25; incompatibilidade em ambos limita o total a 200. Esses parâmetros só são usados após a etapa de recomendação ter sido revelada. Categorias ausentes não comprovam incompatibilidade.
+- A indicação de contradição da IA, isoladamente, não comprova um conflito alimentar. O catálogo público atual não contém preço, composição, alérgenos nem tempo de preparo; esses dados não são inferidos da descrição ou de alegações do jogador.
+
+A geração usa JSON Schema com referências limitadas às falas realmente presentes, e a API verifica as referências novamente. O cálculo continua no servidor. A avaliação usa uma única chamada Groq, respostas curtas e `reasoning_effort=low` para GPT OSS, mantendo os caches existentes. `Server-Timing` permite distinguir autenticação, consulta do produto e avaliação. A duração depende também da rede e do provedor. Documentação: [raciocínio na Groq](https://console.groq.com/docs/reasoning) e [respostas estruturadas](https://console.groq.com/docs/structured-outputs).
 
 ## Contexto confiável
 
@@ -53,7 +61,7 @@ Exemplo de corpo:
 }
 ```
 
-`no_atual` é a fala atual já vista. `historico` contém as decisões anteriores. Quantidade e observação são opcionais. A API fornece o serviço para o futuro seletor de produtos do jogo; esta versão não adiciona a tela de seleção ao jogo.
+`no_atual` é a fala atual já vista. `historico` contém as decisões anteriores. Quantidade e observação são opcionais. O jogo integra a seleção de três produtos e a avaliação da escolha.
 
 ## Chaves Groq
 
@@ -92,7 +100,7 @@ Os parâmetros estão em `PRODUCT_PARAMETERS`, no arquivo `src/recommendations.p
 | Camila | Praticidade | Carnes, Aves, Pescados, Acompanhamentos |
 | André | Dia a dia | Carnes, Aves, Pescados, Acompanhamentos |
 
-O servidor consulta uma única ocasião e filtra os tipos permitidos entre os produtos disponíveis. Depois elimina nomes/códigos duplicados e usa `SystemRandom.sample` para sortear três alimentos distintos, com a mesma chance para cada alimento elegível. Uma foto existente é preferida somente para representar linhas duplicadas do mesmo alimento; produtos distintos sem foto continuam elegíveis.
+O servidor consulta uma única ocasião e filtra os tipos permitidos entre os produtos disponíveis com foto válida. Depois elimina nomes/códigos duplicados e usa `SystemRandom.sample` para sortear três alimentos distintos, com a mesma chance para cada alimento elegível.
 
 O Redis guarda o catálogo de candidatos, e não o resultado do sorteio: novas consultas podem apresentar trios diferentes, inclusive com o cache aquecido. Um sorteio pode repetir um trio por acaso; se houver exatamente três produtos elegíveis, o conjunto será o mesmo. Se houver menos de três, o endpoint retorna `INSUFFICIENT_PRODUCTS`, sem completar as opções com alimentos fora dos parâmetros.
 

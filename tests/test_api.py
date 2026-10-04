@@ -38,14 +38,15 @@ class EvaluationTest(unittest.TestCase):
 
     def test_scores_are_bounded_and_recomputed(self):
         context=build_context(EvaluationRequest(cliente_id='cliente1',no_atual='d1',produto_id='p',quantidade=dict(unidades=2)),dict(id='p'))
-        for note,expected in [(0,0),(80,800),(100,1000)]:
+        for note,expected in [(0,150),(80,638),(100,638)]:
             output=final_result(AIJudgement.model_validate(judgement(note)),context,'test')
             self.assertEqual(output.score,expected)
             self.assertEqual(output.percentual_adequacao,expected/10)
         invalid=judgement(1001)
         with self.assertRaises(ValidationError): AIJudgement.model_validate(invalid)
         conflict=judgement(100); conflict['contradicao_explicita']=True
-        self.assertEqual(final_result(AIJudgement.model_validate(conflict),context,'test').score,200)
+        # The provider flag is insufficient proof of an ingredient conflict.
+        self.assertEqual(final_result(AIJudgement.model_validate(conflict),context,'test').score,638)
 
     def test_model_cannot_cite_future_turns(self):
         context=build_context(EvaluationRequest(cliente_id='cliente1',no_atual='d1',produto_id='p'),dict(id='p'))
@@ -122,7 +123,9 @@ class APIAuthTest(unittest.TestCase):
              patch('main.cached_services',return_value=(pool,firebase)),TestClient(app) as client:
             response=client.post('/v1/avaliacoes',headers={'Authorization':'Bearer '+'x'*30},json=dict(cliente_id='cliente1',no_atual='d1',produto_id='p'))
         self.assertEqual(response.status_code,200,response.text)
-        self.assertEqual(response.json()['score'],770)
+        self.assertEqual(response.json()['score'],613)
+        self.assertIn('groq;dur=',response.headers['Server-Timing'])
+        self.assertEqual(pool.complete.call_count,1)
         self.assertNotIn('uid',str(pool.complete.call_args))
         self.assertIn('Produto do servidor',str(pool.complete.call_args))
 

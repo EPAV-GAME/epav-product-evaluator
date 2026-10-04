@@ -41,7 +41,7 @@ class BodyLimit:
             return messages.pop(0) if messages else await receive()
         await self.app(scope,replay,send)
 
-app=FastAPI(title='EPAV — Avaliação de produtos',version='1.3.0',
+app=FastAPI(title='EPAV — Avaliação de produtos',version='1.4.0',
             description='Avaliação pedagógica de adequação: 0 a 1000, usando cenários oficiais e catálogo Firebase.')
 app.add_middleware(BodyLimit)
 app.add_middleware(CORSMiddleware,allow_origins=['https://epav-game.github.io'],
@@ -134,7 +134,7 @@ async def cache_status(request:Request,credentials:HTTPAuthorizationCredentials|
     return {'redis_disponivel':reachable,'catalogo_ttl':900,'produto_ttl':60,'ranking_ttl':30}
 
 @app.post('/v1/avaliacoes',response_model=EvaluationResponse)
-async def evaluate(choice:EvaluationRequest,request:Request,credentials:HTTPAuthorizationCredentials|None=Security(bearer)):
+async def evaluate(choice:EvaluationRequest,request:Request,response:Response,credentials:HTTPAuthorizationCredentials|None=Security(bearer)):
     config=config_for(request)
     origins=config.get('ALLOWED_ORIGINS','').split(',')
     if request.headers.get('origin') and request.headers['origin'] not in origins:
@@ -145,10 +145,12 @@ async def evaluate(choice:EvaluationRequest,request:Request,credentials:HTTPAuth
     stage='authenticate'
     try:
         async with asyncio.timeout(40):
+            started = time.monotonic()
             # Authenticate before parsing Groq keys; unconfigured service never becomes public.
             from services import FirebaseService
             firebase = FirebaseService(config['FIREBASE_WEB_API_KEY'],config['FIREBASE_SERVICE_ACCOUNT_JSON'])
             uid=await firebase.authenticate(credentials.credentials)
+            authenticated = time.monotonic()
             stage='rate_limits'
             if env is not None:
                 for name,key in [('IP_LIMIT',request.headers.get('cf-connecting-ip','unknown')),('USER_LIMIT',uid),('GLOBAL_LIMIT','evaluations')]:
@@ -159,10 +161,13 @@ async def evaluate(choice:EvaluationRequest,request:Request,credentials:HTTPAuth
             stage='catalog'
             product=await firebase.product(choice.produto_id)
             context=build_context(choice,product)
+            catalogued = time.monotonic()
             model=config.get('GROQ_MODEL') or 'openai/gpt-oss-20b'
             stage='groq'
             judgement=await pool.complete(provider_payload(context,model))
-            return final_result(judgement,context,model)
+            result = final_result(judgement,context,model)
+            response.headers['Server-Timing'] = f'auth;dur={(authenticated-started)*1000:.1f}, catalog;dur={(catalogued-authenticated)*1000:.1f}, groq;dur={(time.monotonic()-catalogued)*1000:.1f}'
+            return result
     except ContextError as error:
         raise HTTPException(422,str(error)) from None
     except ServiceError:
