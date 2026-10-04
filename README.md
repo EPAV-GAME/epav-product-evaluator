@@ -75,7 +75,26 @@ Todas indisponíveis: HTTP 503 com `Retry-After`, sem pontuação inventada. Res
 
 `peso_embalagem_kg` é extraído apenas de uma indicação explícita em gramas ou quilos na descrição (ex.: `700G`, `1KG`). Fica nulo quando o peso não está claro. O campo comercial `Volume (KG)` representa volume agregado e não é apresentado ao jogador nem enviado à IA.
 
-A recuperação usa consultas limitadas de até 150 registros por categoria/ocasião, com cache Redis compartilhado por 15 minutos, filtrando `disponivelNoJogo=true` e os indicadores SIM/NÃO sincronizados pelo painel admin. Consultas de igualdade aproveitam índices existentes. A seleção considera o perfil e as falas reveladas, remove duplicações por código/nome e varia a ordem dos cartões. Não consome tokens Groq, não oferece uma nota antecipada nem expõe os dados comerciais. A avaliação final continua em `/v1/avaliacoes`, usando uma ficha pública com cache de até 60 segundos para conferir disponibilidade e avaliar a quantidade escolhida.
+A recuperação usa uma consulta limitada de até 150 registros da ocasião configurada para o cliente, com cache Redis compartilhado por 15 minutos, filtrando `disponivelNoJogo=true` e os indicadores SIM/NÃO sincronizados pelo painel admin. Consultas de igualdade aproveitam índices existentes. A seleção filtra os tipos e a ocasião definidos para cada cliente, remove duplicações por código/nome e sorteia três alimentos sem repetição. Não consome tokens Groq, não oferece uma nota antecipada nem expõe os dados comerciais. A avaliação final continua em `/v1/avaliacoes`, usando uma ficha pública com cache de até 60 segundos para conferir disponibilidade e avaliar a quantidade escolhida.
+
+
+#### Parâmetros de seleção, sem IA
+
+Os parâmetros estão em `PRODUCT_PARAMETERS`, no arquivo `src/recommendations.py`, e correspondem às necessidades dos roteiros oficiais. São regras pré-definidas; não representam estatísticas coletadas dos jogadores.
+
+| Cliente | Ocasião obrigatória | Tipos permitidos |
+|---|---|---|
+| Lucas | Churrasco | Carnes, Aves |
+| Marina | Praticidade | Carnes, Aves, Pescados, Acompanhamentos |
+| Rafael | Dia a dia | Carnes |
+| Camila | Praticidade | Carnes, Aves, Pescados, Acompanhamentos |
+| André | Dia a dia | Carnes, Aves, Pescados, Acompanhamentos |
+
+O servidor consulta uma única ocasião e filtra os tipos permitidos entre os produtos disponíveis. Depois elimina nomes/códigos duplicados e usa `SystemRandom.sample` para sortear três alimentos distintos, com a mesma chance para cada alimento elegível. Uma foto existente é preferida somente para representar linhas duplicadas do mesmo alimento; produtos distintos sem foto continuam elegíveis.
+
+O Redis guarda o catálogo de candidatos, e não o resultado do sorteio: novas consultas podem apresentar trios diferentes, inclusive com o cache aquecido. Um sorteio pode repetir um trio por acaso; se houver exatamente três produtos elegíveis, o conjunto será o mesmo. Se houver menos de três, o endpoint retorna `INSUFFICIENT_PRODUCTS`, sem completar as opções com alimentos fora dos parâmetros.
+
+As categorias não confirmam preço, composição ou alergênicos. Restrições não especificadas no roteiro continuam sendo pontos para confirmar, e a quantidade fica a cargo do jogador. A Groq é chamada somente em `/v1/avaliacoes`, após a escolha. `/v1/recomendacoes` funciona sem configurar chaves Groq e continua validando o histórico contra o roteiro oficial.
 
 O Worker Python usa as APIs oficiais Google com a conta de serviço guardada em segredo. Não é necessário instalar bibliotecas gRPC do Firebase Admin SDK no runtime do Cloudflare, nem liberar leitura pública da coleção.
 

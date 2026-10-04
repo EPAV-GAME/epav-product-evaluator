@@ -197,10 +197,10 @@ class FirebaseService:
                     peso_embalagem_kg=package_weight(data['nome']))
 
     async def catalog(self,context=None):
-        from recommendations import normalize
-        text = normalize((context or {}).get('cliente',{}).get('perfil',''))
-        occasion = 'Churrasco' if 'churrasco' in text else 'Praticidade' if any(w in text for w in ['pressa','pratic']) else 'Dia a dia'
-        facets = ['Carnes','Aves','Pescados',occasion]
+        from recommendations import product_parameters
+        occasion = product_parameters(context)['ocasiao'] if context is not None else 'Dia a dia'
+        # The occasion query already returns all product types; no extra type scans.
+        facets = [occasion]
         fields = ['nome','codigo','disponivelNoJogo','tiposProduto','ocasioes','imagemSwift.url',
                   'dadosOriginais.Marca','dadosOriginais.Formato','dadosOriginais.Unidade Medida']
         async def query_facet(facet):

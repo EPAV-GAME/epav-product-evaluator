@@ -1,9 +1,11 @@
 import unittest
+import random
 from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 from models import RecommendationRequest
 from context import ContextError
-from recommendations import recommendation_context, select_products, package_weight, public_product
+from recommendations import recommendation_context, select_products, package_weight, public_product, PRODUCT_PARAMETERS, STAGES
+from scenarios import SCENARIOS
 from services import FirebaseService, HTTPResult, ServiceError
 from main import app
 import json
@@ -18,6 +20,45 @@ def products():
     return [(str(i),dict(data,nome='Produto '+str(i),codigo=str(i))) for i in range(4)]
 
 class RecommendationTest(unittest.TestCase):
+    def test_each_official_client_only_gets_products_matching_its_parameters(self):
+        records=[]
+        for occasion in ['Churrasco','Praticidade','Dia a dia','Lanches']:
+            for kind in ['Carnes','Aves','Pescados','Acompanhamentos','Sobremesas']:
+                for i in range(4):
+                    doc_id=f'{occasion}-{kind}-{i}'
+                    records.append((doc_id,dict(nome=doc_id,codigo=doc_id,disponivelNoJogo=True,
+                                               tiposProduto=[kind],ocasioes=[occasion])))
+        for client_id, parameters in PRODUCT_PARAMETERS.items():
+            client=SCENARIOS[client_id];node=client['noInicial'];history=[]
+            while node != STAGES[client_id]:
+                option=client['dialogo'][node]['opcoes'][0]
+                history.append({'no_id':node,'opcao_id':option['id']});node=option['proximoNo']
+            revealed=recommendation_context(RecommendationRequest(cliente_id=client_id,no_atual=node,historico=history))
+            for seed in range(10):
+                output=select_products(revealed,records,rng=random.Random(seed))
+                self.assertEqual(len(output['produtos']),3)
+                for product in output['produtos']:
+                    self.assertIn(parameters['ocasiao'],product['ocasioes'])
+                    self.assertTrue(set(parameters['tipos']) & set(product['tiposProduto']))
+
+    def test_new_requests_draw_different_sets_from_the_same_cached_candidates(self):
+        records=products()+[(str(i),dict(products()[0][1],nome='Produto '+str(i),codigo=str(i))) for i in range(4,20)]
+        original=json.dumps(records)
+        draws=[select_products(context(),records,rng=random.Random(seed))['produtos'] for seed in range(12)]
+        self.assertGreater(len({tuple(sorted(p['id'] for p in draw)) for draw in draws}),1)
+        self.assertGreater(len({p['id'] for draw in draws for p in draw}),3)
+        self.assertEqual(json.dumps(records),original)
+
+    def test_too_few_compatible_products_never_falls_back_to_unrelated_foods(self):
+        unrelated=[('dessert',dict(nome='Sorvete',codigo='dessert',disponivelNoJogo=True,
+                                 tiposProduto=['Sobremesas'],ocasioes=['Lanches']))]
+        with self.assertRaises(ServiceError) as error: select_products(context(),products()[:2]+unrelated)
+        self.assertEqual(error.exception.code,'INSUFFICIENT_PRODUCTS')
+
+    def test_different_codes_with_same_description_do_not_increase_draw_pool(self):
+        duplicate=('other-code',dict(products()[0][1],codigo='other-code'))
+        with self.assertRaises(ServiceError): select_products(context(),products()[:2]+[duplicate])
+
     def test_package_weight_uses_description_not_commercial_sales_volume(self):
         self.assertEqual(package_weight('LINGUICA SWIFT 700G'), 0.7)
         self.assertEqual(package_weight('FILE 1KG'), 1)
@@ -53,10 +94,12 @@ class RecommendationTest(unittest.TestCase):
         choice={'cliente_id':'cliente1','no_atual':'d3','historico':[{'no_id':'d1','opcao_id':'d1-o1'},{'no_id':'d2','opcao_id':'d2-o1'}]}
         with TestClient(app) as client:
             self.assertEqual(client.post('/v1/recomendacoes',json=choice).status_code,401)
-            with patch('main.authorize',AsyncMock(return_value=type('Catalog',(),{'catalog':AsyncMock(return_value=products())})())):
+            with patch('main.authorize',AsyncMock(return_value=type('Catalog',(),{'catalog':AsyncMock(return_value=products())})())), \
+                 patch('main.cached_services',side_effect=AssertionError('Selection must never access the Groq pool')) as ai:
                 response=client.post('/v1/recomendacoes',json=choice,headers={'Authorization':'Bearer '+'t'*30})
                 self.assertEqual(response.status_code,200);self.assertEqual(len(response.json()['produtos']),3)
                 self.assertEqual(client.post('/v1/recomendacoes',json=dict(choice,produtos=products())).status_code,422)
+                ai.assert_not_called()
 
 class CatalogQueryTest(unittest.IsolatedAsyncioTestCase):
     async def test_catalog_queries_indexed_flags_and_caches_with_server_projection(self):
@@ -65,9 +108,20 @@ class CatalogQueryTest(unittest.IsolatedAsyncioTestCase):
         transport=AsyncMock(return_value=HTTPResult(200,{},json.dumps(docs)))
         service=FirebaseService('public','{}',transport)
         with patch.object(service,'access_token',AsyncMock(return_value='token')):
-            records=await service.catalog();self.assertEqual(len(records),600)
+            records=await service.catalog();self.assertEqual(len(records),150)
             self.assertEqual(await service.catalog(),records)
-        self.assertEqual(transport.call_count,4)
+        self.assertEqual(transport.call_count,1)
         query=transport.call_args.kwargs['payload']['structuredQuery']
         self.assertEqual(query['where']['compositeFilter']['filters'][0]['fieldFilter']['value'],{'booleanValue':True})
         self.assertTrue(all('Margem' not in field['fieldPath'] for field in query['select']['fields']))
+
+    async def test_only_queries_the_configured_occasion_and_reuses_it_for_same_profile(self):
+        transport=AsyncMock(return_value=HTTPResult(200,{},'[]'))
+        service=FirebaseService('public','{}',transport)
+        with patch.object(service,'access_token',AsyncMock(return_value='token')):
+            for client_id in STAGES:
+                await service.catalog({'cliente':{'id':client_id}})
+        self.assertEqual(transport.call_count,3)
+        facets=[call.kwargs['payload']['structuredQuery']['where']['compositeFilter']['filters'][1]
+                ['fieldFilter']['field']['fieldPath'] for call in transport.call_args_list]
+        self.assertEqual(set(facets),{'`dadosOriginais`.`Churrasco`','`dadosOriginais`.`Praticidade`','`dadosOriginais`.`Dia a dia`'})

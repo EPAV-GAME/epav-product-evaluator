@@ -40,7 +40,7 @@ class BodyLimit:
             return messages.pop(0) if messages else await receive()
         await self.app(scope,replay,send)
 
-app=FastAPI(title='EPAV — Avaliação de produtos',version='1.1.0',
+app=FastAPI(title='EPAV — Avaliação de produtos',version='1.2.0',
             description='Avaliação pedagógica de adequação: 0 a 1000, usando cenários oficiais e catálogo Firebase.')
 app.add_middleware(BodyLimit)
 app.add_middleware(CORSMiddleware,allow_origins=['https://epav-game.github.io'],
@@ -82,7 +82,8 @@ async def service_error(request,error):
 @app.get('/health')
 async def health(request:Request):
     config=config_for(request)
-    return dict(service='epav-product-evaluator',configured=bool(config['GROQ_API_KEYS'] and config['FIREBASE_SERVICE_ACCOUNT_JSON']),versao_rubrica=RUBRIC_VERSION, cache_configured=config.get('CACHE_BINDING') is not None)
+    return dict(service='epav-product-evaluator',configured=bool(config['GROQ_API_KEYS'] and config['FIREBASE_SERVICE_ACCOUNT_JSON']),versao_rubrica=RUBRIC_VERSION, cache_configured=config.get('CACHE_BINDING') is not None,
+                selecao_produtos='parametros_e_sorteio_sem_ia')
 
 @app.get('/v1/ranking')
 async def ranking(request:Request):

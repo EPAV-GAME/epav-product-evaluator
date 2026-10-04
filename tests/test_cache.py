@@ -106,7 +106,7 @@ class CacheTest(unittest.IsolatedAsyncioTestCase):
         second=FirebaseService('public','{}',transport,SharedCache(backend))
         with patch.object(first,'access_token',AsyncMock(return_value='token')), patch.object(second,'access_token',AsyncMock()) as oauth:
             self.assertEqual(await first.catalog(),await second.catalog())
-            self.assertEqual(transport.call_count,4);oauth.assert_not_called()
+            self.assertEqual(transport.call_count,1);oauth.assert_not_called()
         self.assertNotIn('private',str(backend.data));self.assertNotIn('Margem',str(backend.data))
 
     async def test_ranking_caches_only_public_columns(self):

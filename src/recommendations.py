@@ -1,11 +1,28 @@
 """Three distinct catalog products selected from the revealed customer context."""
-import hashlib
+import random
 import re
 import unicodedata
 from context import build_context, ContextError
 from models import EvaluationRequest
 
 STAGES = {'cliente1': 'd3', 'cliente2': 'd5', 'cliente3': 'd7', 'cliente4': 'd6', 'cliente5': 'd7'}
+
+# Requirements taken from the five official scripts, not inferred by an AI.
+# These are selection rules, not measured customer statistics.
+PRODUCT_PARAMETERS = {
+    'cliente1': {'ocasiao': 'Churrasco', 'tipos': ('Carnes', 'Aves')},
+    'cliente2': {'ocasiao': 'Praticidade', 'tipos': ('Carnes', 'Aves', 'Pescados', 'Acompanhamentos')},
+    'cliente3': {'ocasiao': 'Dia a dia', 'tipos': ('Carnes',)},
+    'cliente4': {'ocasiao': 'Praticidade', 'tipos': ('Carnes', 'Aves', 'Pescados', 'Acompanhamentos')},
+    'cliente5': {'ocasiao': 'Dia a dia', 'tipos': ('Carnes', 'Aves', 'Pescados', 'Acompanhamentos')},
+}
+
+
+def product_parameters(context):
+    parameters = PRODUCT_PARAMETERS.get(context.get('cliente', {}).get('id'))
+    if parameters is None:
+        raise ContextError('Cliente desconhecido para seleção de produtos.')
+    return parameters
 
 def normalize(text):
     return ''.join(c for c in unicodedata.normalize('NFD', str(text).lower()) if unicodedata.category(c) != 'Mn')
@@ -38,42 +55,31 @@ def public_product(doc_id, data):
                 marca=field('Marca'), formato=field('Formato'), unidade_medida=field('Unidade Medida'),
                 peso_embalagem_kg=package_weight(data.get('nome', '')), imagem_url=image_url((data.get('imagemSwift') or {}).get('url')))
 
-def select_products(context, records):
-    # Only the official profile and already revealed facts/falas contribute to retrieval.
-    text = normalize(context['cliente']['perfil'] + ' ' + ' '.join(context['ficha_escuta'].values()) +
-                     ' ' + ' '.join(turn['fala_cliente'] for turn in context['conversa']))
-    occasions = {'Dia a dia': 2}
-    if 'churrasco' in text: occasions['Churrasco'] = 12
-    if any(word in text for word in ['pressa', 'pratic', 'tempo', 'cansad']): occasions['Praticidade'] = 5
-    if any(word in text for word in ['pessoas', 'familia', 'semana']): occasions['Família'] = 3
-    types = {'Carnes': 4, 'Aves': 4, 'Pescados': 3}
-    if 'churrasco' in text or 'carnes' in text: types = {'Carnes': 10, 'Aves': 3}
-    unique = {}
+def select_products(context, records, *, rng=None):
+    parameters = product_parameters(context)
+    candidates = []
     for doc_id, data in records:
         if data.get('disponivelNoJogo') is not True or not data.get('nome'): continue
         product = public_product(doc_id, data)
-        # Rows can contain the same food in PC/ST units: offer the food only once.
-        identity = normalize(product['codigo'] or product['nome'])
-        value = sum(occasions.get(v, 0) for v in product['ocasioes']) + sum(types.get(v, 0) for v in product['tiposProduto'])
-        if 'carne moida' in text and 'moida' in normalize(product['nome']): value += 12
-        if not any(t in types for t in product['tiposProduto']): value -= 8
-        tie = hashlib.sha256((context['cliente']['id'] + doc_id).encode()).hexdigest()
-        candidate = (value, bool(product['imagem_url']), tie, product)
-        if identity not in unique or candidate[:3] > unique[identity][:3]: unique[identity] = candidate
-    ranked = sorted(unique.values(), key=lambda candidate: candidate[:3], reverse=True)
-    chosen, names = [], set()
-    for value, photo, tie, product in ranked:
-        # Also avoid duplicate descriptions recorded under different internal codes.
+        if parameters['ocasiao'] not in product['ocasioes']: continue
+        if not any(t in parameters['tipos'] for t in product['tiposProduto']): continue
+        candidates.append(product)
+    # Prefer an existing photo when choosing which duplicate row represents the food.
+    # All distinct compatible foods remain eligible for the random draw.
+    candidates.sort(key=lambda p: (not bool(p['imagem_url']), p['id']))
+    pool, names, codes, identifiers = [], set(), set(), set()
+    for product in candidates:
         name = normalize(product['nome'])
-        if name in names: continue
-        names.add(name); chosen.append(product)
-        if len(chosen) == 3: break
-    if len(chosen) < 3:
+        code = normalize(product['codigo'].strip())
+        if name in names or (code and code in codes) or product['id'] in identifiers: continue
+        names.add(name); identifiers.add(product['id'])
+        if code: codes.add(code)
+        pool.append(product)
+    if len(pool) < 3:
         from services import ServiceError
         raise ServiceError('INSUFFICIENT_PRODUCTS',503)
-    # Do not expose a retrieval rank or place the highest ranked food in a fixed slot.
-    seed = repr(context['conversa'])
-    chosen.sort(key=lambda p: hashlib.sha256((seed+p['id']).encode()).hexdigest())
+    # Cache the candidate catalog, not the draw. Each request samples without replacement.
+    chosen = (rng if rng is not None else random.SystemRandom()).sample(pool, 3)
     return dict(cliente_id=context['cliente']['id'], no_atual=context['conversa'][-1]['id'],
                 produtos=chosen, ficha_escuta=list(context['ficha_escuta'].values()),
                 orientacao='Compare as fichas com as necessidades do cliente. Confirme composição e restrições antes de recomendar.')
