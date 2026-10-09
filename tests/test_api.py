@@ -52,7 +52,8 @@ class EvaluationTest(unittest.TestCase):
         context=build_context(EvaluationRequest(cliente_id='cliente1',no_atual='d1',produto_id='p'),dict(id='p'))
         answer=judgement();answer['necessidade']['evidencias']=['d8']
         with self.assertRaises(ValueError): final_result(AIJudgement.model_validate(answer),context,'test')
-        self.assertEqual(provider_payload(context,'test')['response_format']['json_schema']['strict'],True)
+        self.assertEqual(provider_payload(context,'test')['response_format'],{'type':'json_object'})
+        self.assertIn('contradicao_explicita',provider_payload(context,'test')['messages'][0]['content'])
 
 class GroqTest(unittest.IsolatedAsyncioTestCase):
     async def test_quota_switches_to_next_key(self):

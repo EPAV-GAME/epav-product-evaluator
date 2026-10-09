@@ -91,7 +91,7 @@ class MenuContextTest(unittest.IsolatedAsyncioTestCase):
         data=json.loads(payload['messages'][1]['content'])
         self.assertEqual(data['produtos_anteriores'][0]['produto']['nome'],'Pão de alho')
         self.assertEqual(data['produtos_anteriores'][0]['quantidade']['unidades'],2)
-        self.assertIn('cardapio',payload['response_format']['json_schema']['schema']['$defs']['Criterion']['properties']['evidencias']['items']['enum'])
+        self.assertIn('"cardapio"',payload['messages'][0]['content'])
         firebase.product.assert_awaited_once_with('before')
 
     async def test_menu_pages_are_shared_across_categories_and_never_cache_private_fields(self):

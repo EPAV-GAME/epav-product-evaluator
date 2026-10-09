@@ -94,13 +94,18 @@ def provider_payload(context, model):
     schema['$defs']['Criterion']['properties']['evidencias']['items']['enum'] = (
         ['perfil', 'produto', 'quantidade', 'ficha_escuta'] + [t['id'] for t in context['conversa']]
         + (['cardapio'] if context.get('produtos_anteriores') else []))
+    references = schema['$defs']['Criterion']['properties']['evidencias']['items']['enum']
+    output_instruction = ('\nRetorne somente JSON com TODOS estes campos obrigatórios: necessidade, ocasiao, praticidade, '
+        'restricoes, quantidade, resumo, sugestao, informacoes_faltantes, contradicao_explicita. '
+        'Cada um dos cinco critérios deve ser um objeto com nota (inteiro 0–100), justificativa (string) e '
+        'evidencias (array de até 5 strings). resumo e sugestao são strings. informacoes_faltantes é array de strings. '
+        'contradicao_explicita é booleano e deve estar presente mesmo quando false. Sem campos adicionais. '
+        'As únicas strings permitidas em evidencias são: '+json.dumps(references,ensure_ascii=False)+'. '
+        'Não cite nomes de necessidades como praticidade, nem falas fora desta lista; use ficha_escuta para fatos da ficha.')
     payload = dict(model=model, temperature=0, max_completion_tokens=2400,
-                   messages=[dict(role='system', content=SYSTEM_PROMPT+'\nResponda somente com um objeto JSON no schema seguinte; '
-                       'cada evidência é uma string de referência, nunca um objeto. Inclua todos os campos, sem campos extras:\n'+
-                       json.dumps(schema,ensure_ascii=False,separators=(',',':'))),
+                   messages=[dict(role='system', content=SYSTEM_PROMPT+output_instruction),
                              dict(role='user', content=json.dumps(dict(context, verificacoes_servidor=provider_checks), ensure_ascii=False))],
-                   response_format=dict(type='json_schema', json_schema=dict(
-                       name='avaliacao_produto', strict=True, schema=schema)))
+                   response_format={'type':'json_object'})
     if model.startswith('openai/gpt-oss-'):
         payload.update(reasoning_effort='low', include_reasoning=False)
     return payload
