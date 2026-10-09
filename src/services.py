@@ -64,6 +64,7 @@ class GroqPool:
 
     async def complete(self,payload):
         invalid_output = False
+        repaired = False
         for index, key in enumerate(self.keys):
             if self.cooldown.get(index,0)>self.clock():
                 continue
@@ -71,6 +72,22 @@ class GroqPool:
                 response = await asyncio.wait_for(self.transport(
                     'https://api.groq.com/openai/v1/chat/completions',
                     headers={'Authorization':'Bearer '+key},payload=payload),timeout=12)
+                # Some valid strict-schema requests fail during generation. Retry
+                # once on the same key in JSON mode, preserving the schema in the
+                # instructions. Pydantic and the evidence checks still gate scores.
+                if response.status == 400 and not repaired:
+                    try: code = response.json().get('error',{}).get('code')
+                    except (ValueError,TypeError,AttributeError): code = None
+                    if code == 'json_validate_failed' and payload.get('response_format',{}).get('type') == 'json_schema':
+                        repaired = True
+                        repair = dict(payload, response_format={'type':'json_object'}, max_completion_tokens=3200,
+                            messages=[*payload['messages'], {'role':'system','content':
+                                'Retorne somente um objeto JSON que corresponda exatamente a este schema. '
+                                'Respeite os limites e referências; não inclua campos adicionais: '+
+                                json.dumps(payload['response_format']['json_schema']['schema'],ensure_ascii=False)}])
+                        response = await asyncio.wait_for(self.transport(
+                            'https://api.groq.com/openai/v1/chat/completions',
+                            headers={'Authorization':'Bearer '+key},payload=repair),timeout=12)
             except (TimeoutError, httpx.HTTPError, OSError):
                 self.cooldown[index] = self.clock()+10
                 continue
@@ -84,7 +101,15 @@ class GroqPool:
             if response.status != 200:
                 # Request/model errors cannot be solved by consuming more keys.
                 try:
-                    code=response.json().get('error',{}).get('code')
+                    provider_error=response.json().get('error',{})
+                    code=provider_error.get('code')
+                    # A provider's schema failure can still contain a complete
+                    # candidate. Accept it only under our unchanged strict model;
+                    # final_result also validates context references and score caps.
+                    if code == 'json_validate_failed' and isinstance(provider_error.get('failed_generation'),str):
+                        try: return AIJudgement.model_validate_json(provider_error['failed_generation'])
+                        except ValidationError as validation:
+                            print(json.dumps({'event':'groq_generation_invalid','types':sorted({item['type'] for item in validation.errors()})}))
                 except (ValueError,TypeError,AttributeError):
                     code=None
                 safe_code=code if code in {'json_validate_failed','model_not_found','invalid_api_key','context_length_exceeded'} else 'request_rejected'

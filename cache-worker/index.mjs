@@ -1,4 +1,4 @@
-import { createClient } from 'redis';
+import { NativeRedis } from './resp.mjs';
 
 const PREFIX = 'epav:game-cache:v1:';
 const RELEASE = "if redis.call('GET',KEYS[1]) == ARGV[1] then return redis.call('DEL',KEYS[1]) else return 0 end";
@@ -23,7 +23,9 @@ export async function operation(client, input) {
   }
   if (!['set', 'claim'].includes(op) || !Number.isInteger(ttl) || ttl < 1 || ttl > 3600 ||
       typeof value !== 'string' || Buffer.byteLength(value) > 256000) throw new Error('Invalid operation');
-  return (await client.set(fullKey, value, { EX: ttl, ...(op === 'claim' ? { NX: true } : {}) })) === 'OK';
+  // Preserve UTF-8 bytes for large catalog values.
+  const encodedValue = Buffer.byteLength(value) > 16384 ? Buffer.from(value, 'utf8') : value;
+  return (await client.set(fullKey, encodedValue, { EX: ttl, ...(op === 'claim' ? { NX: true } : {}) })) === 'OK';
 }
 
 export default {
@@ -35,14 +37,8 @@ export default {
     if (text.length > 300000) return new Response(null, { status: 413 });
     let input;
     try { input = JSON.parse(text); } catch { return new Response(null, { status: 400 }); }
-    const client = createClient({
-      username: env.REDIS_USERNAME, password: env.REDIS_PASSWORD,
-      socket: { host: env.REDIS_HOST, port: Number(env.REDIS_PORT), tls: env.REDIS_TLS === 'true',
-        connectTimeout: 1200, reconnectStrategy: false },
-      disableOfflineQueue: true,
-    });
-    // Never log raw Redis errors: these may include connection details.
-    client.on('error', () => {});
+    const { connect } = await import('cloudflare:sockets');
+    const client = new NativeRedis(connect, env);
     let timer;
     try {
       const result = await Promise.race([
@@ -50,7 +46,13 @@ export default {
         new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Cache timeout')), 1800); }),
       ]);
       return Response.json({ value: result });
-    } catch {
+    } catch (error) {
+      // Only fixed classifications and sizes: never log messages, values or credentials.
+      const code = {'Cache timeout':'timeout','Invalid operation':'invalid_operation','Invalid key':'invalid_key',
+        'Invalid lock':'invalid_lock','Redis command failed':'redis_rejected','Redis socket closed':'socket_closed',
+        'Invalid Redis response':'invalid_response'}[error?.message] || 'command_failed';
+      console.log(JSON.stringify({ event: 'cache_failure', op: ['get','read','set','claim','release','ping','invalidate'].includes(input.op) ? input.op : 'invalid',
+        code, value_bytes: typeof input.value === 'string' ? Buffer.byteLength(input.value) : 0 }));
       return Response.json({ error: 'CACHE_UNAVAILABLE' }, { status: 503 });
     } finally {
       clearTimeout(timer);

@@ -94,8 +94,10 @@ def provider_payload(context, model):
     schema['$defs']['Criterion']['properties']['evidencias']['items']['enum'] = (
         ['perfil', 'produto', 'quantidade', 'ficha_escuta'] + [t['id'] for t in context['conversa']]
         + (['cardapio'] if context.get('produtos_anteriores') else []))
-    payload = dict(model=model, temperature=0, max_completion_tokens=1600,
-                   messages=[dict(role='system', content=SYSTEM_PROMPT),
+    payload = dict(model=model, temperature=0, max_completion_tokens=2400,
+                   messages=[dict(role='system', content=SYSTEM_PROMPT+'\nResponda somente com um objeto JSON no schema seguinte; '
+                       'cada evidência é uma string de referência, nunca um objeto. Inclua todos os campos, sem campos extras:\n'+
+                       json.dumps(schema,ensure_ascii=False,separators=(',',':'))),
                              dict(role='user', content=json.dumps(dict(context, verificacoes_servidor=provider_checks), ensure_ascii=False))],
                    response_format=dict(type='json_schema', json_schema=dict(
                        name='avaliacao_produto', strict=True, schema=schema)))

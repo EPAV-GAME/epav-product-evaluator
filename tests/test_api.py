@@ -80,6 +80,31 @@ class GroqTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ServiceError): await pool.complete({})
         self.assertEqual(transport.call_count,1)
 
+    async def test_generation_schema_failure_has_one_validated_json_retry_on_same_key(self):
+        transport=AsyncMock(side_effect=[result(400,{'error':{'code':'json_validate_failed'}}),result()])
+        pool=GroqPool('gsk_'+'a'*30,transport)
+        payload={'messages':[{'role':'system','content':'Evaluate.'}],
+                 'response_format':{'type':'json_schema','json_schema':{'schema':AIJudgement.model_json_schema()}}}
+        self.assertEqual((await pool.complete(payload)).necessidade.nota,80)
+        self.assertEqual(transport.call_count,2)
+        repair=transport.call_args.kwargs['payload']
+        self.assertEqual(repair['response_format'],{'type':'json_object'})
+        self.assertIn('necessidade',repair['messages'][-1]['content'])
+        self.assertEqual(payload['response_format']['type'],'json_schema')
+        transport.reset_mock();transport.side_effect=[result(400,{'error':{'code':'json_validate_failed'}}),
+            result(200,dict(choices=[dict(message=dict(content='{}'))]))]
+        with self.assertRaises(ServiceError) as error: await pool.complete(payload)
+        self.assertEqual(error.exception.code,'INVALID_AI_RESPONSE')
+        self.assertEqual(transport.call_count,2)
+
+    async def test_error_candidate_is_accepted_only_with_complete_valid_rubric(self):
+        transport=AsyncMock(return_value=result(400,{'error':{'code':'json_validate_failed',
+            'failed_generation':json.dumps(judgement())}}))
+        pool=GroqPool('gsk_'+'a'*30,transport)
+        self.assertEqual((await pool.complete({})).necessidade.nota,80)
+        transport.return_value=result(400,{'error':{'code':'json_validate_failed','failed_generation':'{}'}})
+        with self.assertRaises(ServiceError): await pool.complete({})
+
     async def test_invalid_ai_json_is_rejected(self):
         pool=GroqPool('gsk_'+'a'*30,AsyncMock(return_value=result(200,dict(choices=[dict(message=dict(content='{}'))]))))
         with self.assertRaises(ServiceError) as error: await pool.complete({})

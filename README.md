@@ -1,5 +1,9 @@
 # EPAV — API de avaliação de produtos
 
+O Worker privado de Redis usa TCP nativo do Cloudflare, com valores enviados em blocos de 16 KiB e leituras transacionais de valor/expiração. Isso permite armazenar o catálogo compactado completo sem a falha de compatibilidade do antigo driver Node.
+
+A avaliação tenta o schema estruturado e, somente em `json_validate_failed`, repete uma vez na mesma chave usando [JSON mode da Groq](https://console.groq.com/docs/structured-outputs). Toda resposta passa pelo modelo Pydantic, referências do diálogo e limites da rubrica. Uma resposta candidata devolvida no erro também só é aceita após essa validação; falhas não recebem nota fictícia.
+
 ## Duas versões do jogo
 
 Esta API conserva a avaliação **com IA** e dez opções por categoria. A [API sem IA](https://github.com/EPAV-GAME/epav-rule-evaluator) calcula sua própria rubrica lógica e oferece cinco opções. Ela reutiliza somente catálogo/contexto/ranking, por service binding, sem chamar a Groq.
