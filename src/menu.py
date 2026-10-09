@@ -46,6 +46,7 @@ def selection_context(choice, context):
 
 async def previous_context(choice, firebase):
     import asyncio
-    products = await asyncio.gather(*(firebase.product(item.produto_id) for item in choice.escolhas_anteriores))
+    read=getattr(firebase,'menu_product',firebase.product) if choice.categoria else firebase.product
+    products = await asyncio.gather(*(read(item.produto_id) for item in choice.escolhas_anteriores))
     return [dict(categoria=item.categoria, produto=product, quantidade=item.quantidade.model_dump())
             for item, product in zip(choice.escolhas_anteriores, products)]

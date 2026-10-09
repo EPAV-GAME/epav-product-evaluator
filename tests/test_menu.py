@@ -119,3 +119,25 @@ class MenuContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(backend.data),1)
         self.assertNotIn('private',json.dumps(first))
         self.assertTrue(all(len(json.dumps(value))<256000 for _,value in db.cache.memory.values()))
+        fiche=await another.menu_product('0')
+        self.assertEqual(fiche['id'],'0')
+        self.assertEqual(transport.call_count,2)
+        self.assertNotIn('imagemSwift',fiche)
+        self.assertNotIn('private',json.dumps(fiche))
+        from services import ServiceError
+        with self.assertRaises(ServiceError):await another.menu_product('missing')
+        self.assertEqual(transport.call_count,2)
+
+    async def test_verified_context_endpoint_requires_auth_and_never_invokes_groq(self):
+        data=choice('principal');data.update(produto_id='p',quantidade={'unidades':2})
+        db=type('DB',(),{'menu_product':AsyncMock(return_value={'id':'p','nome':'Carne','tiposProduto':['Carnes']}),
+            'product':AsyncMock(side_effect=AssertionError('Do not refetch menu products'))})()
+        with TestClient(app) as client:
+            self.assertEqual(client.post('/v1/contexto',json=data).status_code,401)
+            with patch('main.authorize',AsyncMock(return_value=db)),patch('main.cached_services',side_effect=AssertionError('No AI')):
+                result=client.post('/v1/contexto',json=data,headers={'Authorization':'Bearer '+'t'*30})
+                self.assertEqual(result.status_code,200,result.text)
+                self.assertEqual(result.json()['produto']['nome'],'Carne')
+                bad=client.post('/v1/contexto',json=dict(data,no_atual='d1'),headers={'Authorization':'Bearer '+'t'*30})
+                self.assertEqual(bad.status_code,422)
+                db.menu_product.assert_awaited_once_with('p')

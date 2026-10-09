@@ -3,6 +3,7 @@ import os
 import json
 import traceback
 import time
+import sys
 from fastapi import FastAPI,HTTPException,Request,Response,Security
 from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
@@ -41,7 +42,7 @@ class BodyLimit:
             return messages.pop(0) if messages else await receive()
         await self.app(scope,replay,send)
 
-app=FastAPI(title='EPAV — Avaliação de produtos',version='1.5.0',
+app=FastAPI(title='EPAV — Catálogo compartilhado e avaliação com IA',version='1.6.0',
             description='Avaliação pedagógica de adequação: 0 a 1000, usando cenários oficiais e catálogo Firebase.')
 app.add_middleware(BodyLimit)
 app.add_middleware(CORSMiddleware,allow_origins=['https://epav-game.github.io'],
@@ -84,6 +85,34 @@ async def recommendations(choice:RecommendationRequest,request:Request,response:
 async def service_error(request,error):
     headers={'Retry-After':str(error.retry_after)} if error.retry_after else {}
     return JSONResponse({'detail':error.code},status_code=error.status,headers=headers)
+
+async def evaluation_context(choice,firebase):
+    # Validate the dialogue/meal order before spending any catalog requests.
+    context=build_context(choice,{})
+    if choice.categoria or choice.escolhas_anteriores:
+        from menu import selection_context,previous_context
+        context=selection_context(choice,context)
+        context['produto']=await firebase.menu_product(choice.produto_id)
+        context['produtos_anteriores']=await previous_context(choice,firebase)
+    else:
+        context['produto']=await firebase.product(choice.produto_id)
+    return context
+
+@app.post('/v1/contexto')
+async def verified_context(choice:EvaluationRequest,request:Request,response:Response,
+                           credentials:HTTPAuthorizationCredentials|None=Security(bearer)):
+    """Authenticated, public catalog/script context; never invokes an AI provider."""
+    try:
+        async with asyncio.timeout(40):
+            started=time.monotonic()
+            firebase=await authorize(request,credentials,config_for(request))
+            context=await evaluation_context(choice,firebase)
+            response.headers['Server-Timing']=f'context;dur={(time.monotonic()-started)*1000:.1f}'
+            return context
+    except ContextError as error:
+        raise HTTPException(422,str(error)) from None
+    except TimeoutError:
+        raise ServiceError('CATALOG_TIMEOUT',503,30) from None
 
 @app.get('/health')
 async def health(request:Request):
@@ -132,7 +161,7 @@ async def cache_status(request:Request,credentials:HTTPAuthorizationCredentials|
         reachable=reachable and entry['value']==value and entry['ttl_ms']>0
         await firebase.cache.invoke('release',key=key,value=value)
     except OSError: reachable=False
-    return {'redis_disponivel':reachable,'catalogo_ttl':900,'produto_ttl':60,'ranking_ttl':30}
+    return {'redis_disponivel':reachable,'catalogo_ttl':900,'fichas_cardapio_ttl':900,'produto_ttl':60,'ranking_ttl':30}
 
 @app.post('/v1/avaliacoes',response_model=EvaluationResponse)
 async def evaluate(choice:EvaluationRequest,request:Request,response:Response,credentials:HTTPAuthorizationCredentials|None=Security(bearer)):
@@ -160,12 +189,7 @@ async def evaluate(choice:EvaluationRequest,request:Request,response:Response,cr
                         raise ServiceError('RATE_LIMITED',429,60)
             pool,firebase=cached_services(config)
             stage='catalog'
-            product=await firebase.product(choice.produto_id)
-            context=build_context(choice,product)
-            if choice.categoria or choice.escolhas_anteriores:
-                from menu import selection_context, previous_context
-                context=selection_context(choice,context)
-                context['produtos_anteriores']=await previous_context(choice,firebase)
+            context=await evaluation_context(choice,firebase)
             catalogued = time.monotonic()
             model=config.get('GROQ_MODEL') or 'openai/gpt-oss-20b'
             stage='groq'
@@ -190,9 +214,6 @@ async def evaluate(choice:EvaluationRequest,request:Request,response:Response,cr
         print(json.dumps({'event':'evaluation_failed','stage':stage,'reason':type(error).__name__,'markers':markers,'frames':frames}))
         raise ServiceError('EVALUATION_FAILED',502) from None
 
-try:
+if sys.platform=='emscripten':
     from workers import asgi
     Default=asgi.entrypoint(app)
-except ImportError:
-    # Native development: uv run uvicorn main:app --app-dir src.
-    pass

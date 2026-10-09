@@ -182,6 +182,17 @@ class FirebaseService:
     async def product(self,doc_id):
         return await self.cache.get_or_load("product:"+doc_id, 60, lambda: self._product(doc_id))
 
+    async def menu_product(self,doc_id):
+        # The recommendation pool already contains the public fiche. Both game
+        # editions reuse it instead of reading each selected/previous food again.
+        for identifier,data in await self._menu_catalog():
+            if identifier==doc_id:
+                from recommendations import public_product
+                card=public_product(identifier,data)
+                return {key:card[key] for key in ('id','nome','tiposProduto','ocasioes',
+                    'marca','formato','unidade_medida','peso_embalagem_kg')}
+        raise ServiceError('PRODUCT_NOT_AVAILABLE',422)
+
     async def _product(self,doc_id):
         token = await self.access_token()
         url = 'https://firestore.googleapis.com/v1/projects/epav-game/databases/(default)/documents/produtos_swift/'+urllib.parse.quote(doc_id,safe='')

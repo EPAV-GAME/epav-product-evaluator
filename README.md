@@ -1,5 +1,13 @@
 # EPAV — API de avaliação de produtos
 
+## Duas versões do jogo
+
+Esta API conserva a avaliação **com IA** e dez opções por categoria. A [API sem IA](https://github.com/EPAV-GAME/epav-rule-evaluator) calcula sua própria rubrica lógica e oferece cinco opções. Ela reutiliza somente catálogo/contexto/ranking, por service binding, sem chamar a Groq.
+
+`POST /v1/contexto` exige o mesmo token e limites de requisição. Reconstrói o diálogo e as fichas públicas dos IDs atual/anteriores, validando as etapas antes de consultar o catálogo. Não expõe dados comerciais, identidade do jogador ou credenciais. As avaliações de cardápio, nas duas versões, aproveitam as fichas presentes no catálogo compactado de 15 minutos em vez de consultar cada documento novamente. Login e permissões permanecem conferidos a cada pedido; não são cacheados.
+
+Os dois jogos usam a mesma geração Redis e invalidação existente do admin/bot. Cache compartilhado limita atualizações ao TTL ou à invalidação; não confunde sorteios com resultados pessoais. O contrato legado sem categoria mantém sua ficha individual com TTL de 60 segundos.
+
 API independente em **FastAPI**, hospedada em **Cloudflare Python Workers**, usando **Groq** para avaliar a recomendação de um alimento ao cliente do jogo. Não treina um modelo próprio: aplica uma rubrica pedagógica a um modelo hospedado pela Groq.
 
 ## Resultado: 0 a 1000
