@@ -15,6 +15,7 @@ class Quantity(StrictModel):
     peso_total_kg: float | None = Field(default=None, gt=0, le=1000, allow_inf_nan=False)
 
 class EvaluationRequest(StrictModel):
+    roteiro: Literal['legado', 'ia-v2'] = 'legado'
     cliente_id: Identifier
     no_atual: Identifier
     produto_id: Identifier
@@ -30,6 +31,7 @@ class MenuSelection(StrictModel):
     quantidade: Quantity
 
 class RecommendationRequest(StrictModel):
+    roteiro: Literal['legado', 'ia-v2'] = 'legado'
     cliente_id: Identifier
     no_atual: Identifier
     historico: list[Decision] = Field(default_factory=list, max_length=40)
@@ -46,6 +48,9 @@ class ProductCard(StrictModel):
     unidade_medida: str | None
     peso_embalagem_kg: float | None
     imagem_url: str
+
+class CatalogCodesRequest(StrictModel):
+    codigos: list[Annotated[str, Field(pattern=r'^\d{1,12}$')]] = Field(min_length=1, max_length=25)
 
 class RecommendationResponse(StrictModel):
     cliente_id: str

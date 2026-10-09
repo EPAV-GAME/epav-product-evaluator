@@ -207,3 +207,8 @@ uv run pywrangler deploy --profile epav
 A chave de invalidação gerada deve ser configurada como segredo no GitHub Actions de `EPAV-GAME/epav-swift-images`. Nunca colocar a senha Redis ou essa chave no frontend, exemplos, arquivos versionados ou logs.
 
 Testes adicionais: `node --test cache-worker/cache.test.mjs`. Os testes Python cobrem cache entre instâncias, consultas simultâneas, expiração, invalidação, falha do Redis, disponibilidade de produtos e exclusão de dados privados.
+# Roteiros de outubro de 2026
+
+O jogo revisado envia `roteiro: "ia-v2"` em recomendações e avaliações. `scenarios_v2.py` contém os oito IDs por cena e a abertura do vendedor. A ausência desse campo mantém o contrato legado.
+
+`POST /v1/catalogo/itens` recebe até 25 códigos numéricos e devolve somente fichas públicas com foto, usando o catálogo já armazenado no Redis. Exige a mesma sessão Firebase e os mesmos limites das recomendações. A API sem IA usa essa rota para enriquecer os cinco produtos fixos do roteiro, sem chamar a Groq e sem receber campos comerciais privados.

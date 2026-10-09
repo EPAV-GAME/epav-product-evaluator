@@ -13,14 +13,26 @@ from services import b64
 from menu import CATEGORIES,MENU_STAGES
 from scenarios import SCENARIOS
 
-def payload(category):
+def payload(category,roteiro='legado',popup_file=None):
+    if roteiro=='popup-v1':
+        script=json.loads(Path(popup_file).read_text(encoding='utf-8-sig'))['clientes']['lucas']
+        stage=next(s for s in script['etapas'] if s.get('popup_produtos_ref')==category)
+        history=[]
+        for s in script['etapas']:
+            if s['id']==stage['id']:break
+            history.append(dict(no_id=s['id'],opcao_id=s['alternativas_cadastradas'][0]['id']))
+        return dict(roteiro=roteiro,cliente_id='cliente1',no_atual=stage['id'],categoria=category,historico=history)
+    from scenarios_v2 import SCENARIOS_V2
+    scripts=SCENARIOS_V2 if roteiro=='ia-v2' else SCENARIOS
     stage=MENU_STAGES['cliente1'][category];history=[];node='d1'
     while node!=stage:
-        option=SCENARIOS['cliente1']['dialogo'][node]['opcoes'][0]
+        option=scripts['cliente1']['dialogo'][node]['opcoes'][0]
         history.append(dict(no_id=node,opcao_id=option['id']));node=option['proximoNo']
-    return dict(cliente_id='cliente1',no_atual=stage,categoria=category,historico=history)
+    return dict(cliente_id='cliente1',no_atual=stage,categoria=category,historico=history,**({'roteiro':roteiro} if roteiro!='legado' else {}))
 
 async def run(args):
+    if args.roteiro=='popup-v1' and (not args.popup_file or args.evaluate):
+        raise ValueError('popup-v1 requires --popup-file and local scoring; do not use --evaluate.')
     async with httpx.AsyncClient(timeout=55,follow_redirects=False) as client:
         if args.firebase_file:
             raw=Path(args.firebase_file).read_text(encoding='utf-8-sig');account=json.loads(raw)
@@ -53,7 +65,8 @@ async def run(args):
         options={}
         for category in CATEGORIES:
             started=time.monotonic()
-            response=await client.post(args.service_url+'/v1/recomendacoes',headers=headers,json=payload(category))
+            endpoint='/v2/recomendacoes' if args.roteiro=='popup-v1' else '/v1/recomendacoes'
+            response=await client.post(args.service_url+endpoint,headers=headers,json=payload(category,args.roteiro,args.popup_file))
             if not response.headers.get('content-type','').startswith('application/json'):
                 print(json.dumps(dict(categoria=category,status=response.status_code,
                     formato=response.headers.get('content-type'),segundos=round(time.monotonic()-started,3))),flush=True)
@@ -69,8 +82,10 @@ async def run(args):
             async with semaphore:
                 response=await client.head(product['imagem_url'])
                 return response.status_code==200 and response.headers.get('content-type','').startswith('image/webp')
-        images=await asyncio.gather(*(check_image(p) for products in options.values() for p in products))
+        photos=[p for products in options.values() for p in products if p.get('imagem_url')]
+        images=await asyncio.gather(*(check_image(p) for p in photos))
         print(json.dumps(dict(fotos_verificadas=len(images),fotos_validas=sum(images))),flush=True)
+        if args.roteiro=='popup-v1':print(json.dumps(dict(opcoes_sem_foto=sum(len(p) for p in options.values())-len(photos))),flush=True)
         if not all(images):raise RuntimeError('Some recommended photos are unavailable')
         if args.cache_status:
             response=await client.get('https://epav-product-evaluator.kevinernandes2012.workers.dev/v1/cache/status',headers=headers)
@@ -80,7 +95,7 @@ async def run(args):
             previous=[]
             for category in CATEGORIES if args.evaluate_all else ['entrada','principal']:
                 product=options[category][0];quantity={'unidades':2}
-                data=dict(payload(category),produto_id=product['id'],quantidade=quantity,escolhas_anteriores=previous)
+                data=dict(payload(category,args.roteiro),produto_id=product['id'],quantidade=quantity,escolhas_anteriores=previous)
                 started=time.monotonic();response=await client.post(args.service_url+'/v1/avaliacoes',headers=headers,json=data)
                 answer=response.json()
                 print(json.dumps(dict(avaliacao=category,status=response.status_code,score=answer.get('score'),
@@ -97,4 +112,6 @@ parser.add_argument('--evaluate',action='store_true')
 parser.add_argument('--evaluate-all',action='store_true')
 parser.add_argument('--cache-status',action='store_true')
 parser.add_argument('--expected-options',type=int,choices=[5,10],default=10)
+parser.add_argument('--roteiro',choices=['legado','ia-v2','popup-v1'],default='legado')
+parser.add_argument('--popup-file')
 asyncio.run(run(parser.parse_args()))

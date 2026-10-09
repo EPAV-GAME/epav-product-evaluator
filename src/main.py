@@ -8,7 +8,7 @@ from fastapi import FastAPI,HTTPException,Request,Response,Security
 from fastapi.security import HTTPBearer,HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from models import EvaluationRequest,EvaluationResponse,RecommendationRequest,RecommendationResponse
+from models import EvaluationRequest,EvaluationResponse,RecommendationRequest,RecommendationResponse,CatalogCodesRequest
 from context import build_context,ContextError
 from evaluator import final_result,provider_payload,RUBRIC_VERSION
 from services import cached_services,ServiceError
@@ -49,6 +49,21 @@ app.add_middleware(CORSMiddleware,allow_origins=['https://epav-game.github.io'],
                    allow_methods=['GET','POST'],allow_headers=['Authorization','Content-Type'],
                    expose_headers=['Server-Timing'],max_age=3600)
 bearer=HTTPBearer(auto_error=False,description='ID token Firebase do projeto epav-game.')
+
+@app.post('/v1/catalogo/itens')
+async def catalog_items(choice:CatalogCodesRequest,request:Request,
+                        credentials:HTTPAuthorizationCredentials|None=Security(bearer)):
+    """Public photo fiches by exact SKU, reusing the same Redis catalog as both editions."""
+    async with asyncio.timeout(40):
+        firebase=await authorize(request,credentials,config_for(request))
+        from recommendations import public_product
+        codes=set(choice.codigos)
+        found={}
+        for identifier,data in await firebase._menu_catalog():
+            card=public_product(identifier,data)
+            if card['codigo'] in codes and card['codigo'] not in found:
+                found[card['codigo']]=card
+        return {'produtos':list(found.values()),'codigos_sem_foto':sorted(codes-found.keys())}
 
 async def authorize(request,credentials,config):
     if request.headers.get('origin') and request.headers['origin'] not in config.get('ALLOWED_ORIGINS','').split(','):
