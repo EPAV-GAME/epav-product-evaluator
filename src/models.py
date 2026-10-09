@@ -71,7 +71,9 @@ class AIJudgement(StrictModel):
     resumo: str = Field(min_length=1, max_length=600)
     sugestao: str = Field(min_length=1, max_length=500)
     informacoes_faltantes: list[str] = Field(max_length=8)
-    contradicao_explicita: bool
+    # Legacy advisory flag; the rubric derives proven conflicts from server facts
+    # and never uses this flag to calculate a score.
+    contradicao_explicita: bool = False
 
 class EvaluationResponse(StrictModel):
     score: int = Field(ge=0, le=1000)

@@ -96,10 +96,10 @@ def provider_payload(context, model):
         + (['cardapio'] if context.get('produtos_anteriores') else []))
     references = schema['$defs']['Criterion']['properties']['evidencias']['items']['enum']
     output_instruction = ('\nRetorne somente JSON com TODOS estes campos obrigatórios: necessidade, ocasiao, praticidade, '
-        'restricoes, quantidade, resumo, sugestao, informacoes_faltantes, contradicao_explicita. '
+        'restricoes, quantidade, resumo, sugestao, informacoes_faltantes. '
         'Cada um dos cinco critérios deve ser um objeto com nota (inteiro 0–100), justificativa (string) e '
         'evidencias (array de até 5 strings). resumo e sugestao são strings. informacoes_faltantes é array de strings. '
-        'contradicao_explicita é booleano e deve estar presente mesmo quando false. Sem campos adicionais. '
+        'contradicao_explicita é um booleano auxiliar opcional. Sem campos adicionais. '
         'As únicas strings permitidas em evidencias são: '+json.dumps(references,ensure_ascii=False)+'. '
         'Não cite nomes de necessidades como praticidade, nem falas fora desta lista; use ficha_escuta para fatos da ficha.')
     payload = dict(model=model, temperature=0, max_completion_tokens=2400,

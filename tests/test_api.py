@@ -55,6 +55,14 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(provider_payload(context,'test')['response_format'],{'type':'json_object'})
         self.assertIn('contradicao_explicita',provider_payload(context,'test')['messages'][0]['content'])
 
+    def test_unused_advisory_flag_can_be_omitted_without_changing_scores(self):
+        context=build_context(EvaluationRequest(cliente_id='cliente1',no_atual='d1',produto_id='p'),dict(id='p'))
+        complete=judgement();without_flag=dict(complete);without_flag.pop('contradicao_explicita')
+        self.assertEqual(final_result(AIJudgement.model_validate(complete),context,'test'),
+                         final_result(AIJudgement.model_validate(without_flag),context,'test'))
+        without_flag.pop('necessidade')
+        with self.assertRaises(ValidationError):AIJudgement.model_validate(without_flag)
+
 class GroqTest(unittest.IsolatedAsyncioTestCase):
     async def test_quota_switches_to_next_key(self):
         transport=AsyncMock(side_effect=[result(429,{}, {'retry-after':'60'}),result()])

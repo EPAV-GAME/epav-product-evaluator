@@ -65,12 +65,14 @@ class CacheTest(unittest.IsolatedAsyncioTestCase):
     async def test_local_memory_never_extends_redis_expiry(self):
         backend=MemoryRedis();first=SharedCache(backend)
         loader=AsyncMock(side_effect=[['old'],['new']])
-        await first.get_or_load('facet:a',1,loader)
-        await asyncio.sleep(.9)
-        second=SharedCache(backend)
-        self.assertEqual(await second.get_or_load('facet:a',1,loader),['old'])
-        await asyncio.sleep(.15)
-        self.assertEqual(await second.get_or_load('facet:a',1,loader),['new'])
+        clock=[100.0]
+        with patch('cache.time.monotonic',side_effect=lambda:clock[0]):
+            await first.get_or_load('facet:a',1,loader)
+            clock[0]=100.9
+            second=SharedCache(backend)
+            self.assertEqual(await second.get_or_load('facet:a',1,loader),['old'])
+            clock[0]=101.05
+            self.assertEqual(await second.get_or_load('facet:a',1,loader),['new'])
     async def test_simultaneous_instances_load_once_and_share_the_result(self):
         backend=MemoryRedis()
         async def read():
