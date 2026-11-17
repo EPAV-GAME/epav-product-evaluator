@@ -13,7 +13,7 @@ from postgres import encode
 TYPES=['Carnes','Aves','Pescados','Acompanhamentos','Sobremesas','Despensa']
 OCCASIONS=['Praticidade','Dia a dia','Churrasco','Lanches','Receitas','Família','Ocasiões especiais','Leve']
 SYNC_COLLECTIONS={'produtos_swift','sincronizacao_imagens_swift','arquivo_produtos_swift'}
-ADMIN_COLLECTIONS={'produtos_swift','auditoria_catalogo','importacoes_catalogo','ranking'}
+ADMIN_COLLECTIONS={'produtos_swift','auditoria_catalogo','ranking'}
 
 class RankingWrite(BaseModel):
     model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)

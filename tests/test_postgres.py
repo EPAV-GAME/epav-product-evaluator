@@ -67,3 +67,9 @@ class RoutesTest(unittest.TestCase):
             response=client.post('/v1/admin/produtos/p',json={'version':'old','changes':{}},
                 headers={'Authorization':'Bearer '+'t'*30})
             self.assertEqual(response.status_code,409);db.execute.assert_not_called()
+
+    def test_retired_import_history_route_is_rejected_before_database_access(self):
+        with patch.object(FirebaseService,'authenticate_admin',AsyncMock(return_value={'localId':'admin'})), \
+             patch.object(FirebaseService,'database',side_effect=AssertionError('Retired route queried the database')),TestClient(app) as client:
+            response=client.get('/v1/admin/dados/importacoes_catalogo',headers={'Authorization':'Bearer '+'t'*30})
+            self.assertEqual(response.status_code,422)
