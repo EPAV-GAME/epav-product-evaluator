@@ -94,39 +94,25 @@ class MenuContextTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"cardapio"',payload['messages'][0]['content'])
         firebase.product.assert_awaited_once_with('before')
 
-    async def test_menu_pages_are_shared_across_categories_and_never_cache_private_fields(self):
-        def encode(value):
-            if isinstance(value,dict):return {'mapValue':{'fields':{k:encode(v) for k,v in value.items()}}}
-            if isinstance(value,list):return {'arrayValue':{'values':[encode(v) for v in value]}}
-            if isinstance(value,bool):return {'booleanValue':value}
-            return {'stringValue':value}
-        documents=[{'document':{'name':'projects/epav-game/databases/(default)/documents/produtos_swift/'+str(i),
-            'fields':{k:encode(v) for k,v in dict(catalog()[i%len(catalog())][1],codigo=str(i),nome='Carne '+str(i),
-                margem='private',fornecedor='private',dadosOriginais={'Marca':'Swift','Margem':'private'}).items()}}} for i in range(501)]
-        transport=AsyncMock(side_effect=[HTTPResult(200,{},json.dumps(documents[:500])),HTTPResult(200,{},json.dumps(documents[500:]))])
-        backend=MemoryRedis()
-        db=FirebaseService('public','{}',transport,cache=SharedCache(backend))
-        with patch.object(db,'access_token',AsyncMock(return_value='token')):
+    async def test_menu_shared_across_categories_and_only_public_fields_cached(self):
+        records=[dict(catalog()[i%len(catalog())][1],id=str(i),codigo=str(i),nome='Carne '+str(i),
+            margem='private',dadosOriginais={'Marca':'Swift','Margem':'private'}) for i in range(501)]
+        database=type('DB',(),{'catalog':AsyncMock(return_value=records)})()
+        backend=MemoryRedis();db=FirebaseService('public',cache=SharedCache(backend))
+        with patch.object(db,'database',return_value=database):
             first=await db.catalog({'categoria_refeicao':'entrada'})
             second=await db.catalog({'categoria_refeicao':'principal'})
-        another=FirebaseService('public','{}',transport,cache=SharedCache(backend))
-        self.assertEqual(await another.catalog({'categoria_refeicao':'sobremesa'}),first)
+        another=FirebaseService('public',cache=SharedCache(backend))
+        with patch.object(another,'database',side_effect=AssertionError('Redis must serve it')):
+            self.assertEqual(await another.catalog({'categoria_refeicao':'sobremesa'}),first)
+            self.assertEqual((await another.menu_product('0'))['id'],'0')
+            from services import ServiceError
+            with self.assertRaises(ServiceError):await another.menu_product('missing')
         self.assertEqual(len(first),501);self.assertEqual(first,second)
-        self.assertEqual(transport.call_count,2)
-        self.assertEqual(transport.call_args_list[0].kwargs['payload']['structuredQuery']['limit'],500)
-        self.assertEqual(transport.call_args_list[1].kwargs['payload']['structuredQuery']['startAt']['values'][0]['referenceValue'],documents[499]['document']['name'])
-        self.assertEqual(len(db.cache.memory),1)
-        self.assertEqual(len(backend.data),1)
-        self.assertNotIn('private',json.dumps(first))
+        database.catalog.assert_awaited_once()
+        self.assertEqual(len(backend.data),1);self.assertNotIn('private',json.dumps(first))
         self.assertTrue(all(len(json.dumps(value))<256000 for _,value in db.cache.memory.values()))
-        fiche=await another.menu_product('0')
-        self.assertEqual(fiche['id'],'0')
-        self.assertEqual(transport.call_count,2)
-        self.assertNotIn('imagemSwift',fiche)
-        self.assertNotIn('private',json.dumps(fiche))
-        from services import ServiceError
-        with self.assertRaises(ServiceError):await another.menu_product('missing')
-        self.assertEqual(transport.call_count,2)
+
 
     async def test_verified_context_endpoint_requires_auth_and_never_invokes_groq(self):
         data=choice('principal');data.update(produto_id='p',quantidade={'unidades':2})

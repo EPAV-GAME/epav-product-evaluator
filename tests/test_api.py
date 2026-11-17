@@ -125,12 +125,12 @@ class GroqTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ServiceError): parse_keys('chave1|chave2')
 
     async def test_private_catalog_fields_never_reach_ai(self):
-        data=dict(nome={'stringValue':'Produto'},disponivelNoJogo={'booleanValue':True},
-                  dadosOriginais={'mapValue':{'fields':{'Marca':{'stringValue':'Swift'},'Margem':{'doubleValue':99},'Nome Fornecedor':{'stringValue':'private'}}}})
-        firebase=FirebaseService('public','{}',AsyncMock(return_value=result(200,dict(fields=data))))
-        with patch.object(firebase,'access_token',AsyncMock(return_value='token')):
-            product=await firebase.product('p')
+        db=type('DB',(),{'catalog':AsyncMock(return_value=[dict(id='p',nome='Produto',disponivelNoJogo=True,
+            dadosOriginais={'Marca':'Swift','Margem':99,'Nome Fornecedor':'private'})])})()
+        service=FirebaseService('public')
+        with patch.object(service,'database',return_value=db): product=await service.product('p')
         self.assertNotIn('private',str(product));self.assertNotIn('Margem',str(product))
+
 
 class APIAuthTest(unittest.TestCase):
     def test_openapi_documents_bearer_authentication(self):

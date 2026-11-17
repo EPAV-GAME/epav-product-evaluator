@@ -111,29 +111,27 @@ class CacheTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ServiceError): await cache.get_or_load('product:p',60,loader)
         self.assertFalse(any('PRODUCT_NOT_AVAILABLE' in str(v) for v in backend.data.values()))
 
-    async def test_catalog_warm_in_a_new_instance_never_queries_firestore_or_caches_private_fields(self):
+    async def test_catalog_warm_instance_reuses_redis_without_postgres(self):
         backend=MemoryRedis()
-        doc={'document':{'name':'projects/epav-game/databases/(default)/documents/produtos_swift/p',
-                         'fields':{'nome':{'stringValue':'Produto'},'disponivelNoJogo':{'booleanValue':True},
-                                   'dadosOriginais':{'mapValue':{'fields':{'Margem':{'doubleValue':99},
-                                                                    'Nome Fornecedor':{'stringValue':'private'}}}}}}}
-        transport=AsyncMock(return_value=HTTPResult(200,{},json.dumps([doc])))
-        first=FirebaseService('public','{}',transport,SharedCache(backend))
-        second=FirebaseService('public','{}',transport,SharedCache(backend))
-        with patch.object(first,'access_token',AsyncMock(return_value='token')), patch.object(second,'access_token',AsyncMock()) as oauth:
+        photo='https://epav-swift-images.kevinernandes2012.workers.dev/images/swift/'+'a'*64+'.webp'
+        database=type('DB',(),{'catalog':AsyncMock(return_value=[dict(id='p',nome='Carne',codigo='1',
+            disponivelNoJogo=True,ocasioes=['Dia a dia'],tiposProduto=['Carnes'],imagemSwift={'url':photo},
+            dadosOriginais={'Margem':99,'Nome Fornecedor':'private'})])})()
+        first=FirebaseService('public',cache=SharedCache(backend));second=FirebaseService('public',cache=SharedCache(backend))
+        with patch.object(first,'database',return_value=database),patch.object(second,'database',side_effect=AssertionError('Warm cache')):
             self.assertEqual(await first.catalog(),await second.catalog())
-            self.assertEqual(transport.call_count,1);oauth.assert_not_called()
+        database.catalog.assert_awaited_once()
         self.assertNotIn('private',str(backend.data));self.assertNotIn('Margem',str(backend.data))
 
+
     async def test_ranking_caches_only_public_columns(self):
-        doc={'document':{'fields':{'nome':{'stringValue':'Jogador'},'uid':{'stringValue':'private-uid'},
-                                  'email':{'stringValue':'private-email'},'pontos':{'integerValue':'10'}}}}
-        transport=AsyncMock(return_value=HTTPResult(200,{},json.dumps([doc])))
-        service=FirebaseService('public','{}',transport,SharedCache(MemoryRedis()))
-        with patch.object(service,'access_token',AsyncMock(return_value='token')):
+        database=type('DB',(),{'ranking':AsyncMock(return_value=[dict(nome='Jogador',uid='private',email='private',
+            pontos=10,qualidadeQuartos=5,satisfacao=60,tempoJogadoMs=50)])})()
+        service=FirebaseService('public',cache=SharedCache(MemoryRedis()))
+        with patch.object(service,'database',return_value=database):
             self.assertEqual(await service.ranking(),await service.ranking())
-        self.assertEqual(transport.call_count,1)
-        self.assertNotIn('private',str(service.cache.memory))
+        database.ranking.assert_awaited_once();self.assertNotIn('private',str(service.cache.memory))
+
 
     async def test_admin_claim_is_required_and_checked_fresh(self):
         transport=AsyncMock(return_value=HTTPResult(200,{},json.dumps({'users':[{'localId':'u','customAttributes':'{}'}]})))

@@ -112,50 +112,16 @@ class RecommendationTest(unittest.TestCase):
                 ai.assert_not_called()
 
 class CatalogQueryTest(unittest.IsolatedAsyncioTestCase):
-    async def test_scan_continues_past_a_first_page_without_images_and_caches_only_photo_records(self):
-        base='projects/epav-game/databases/(default)/documents/produtos_swift/'
-        missing=[{'document':{'name':base+str(i),'fields':{'nome':{'stringValue':'Missing'}}}} for i in range(150)]
-        def value(data):
-            if isinstance(data,dict): return {'mapValue':{'fields':{k:value(v) for k,v in data.items()}}}
-            if isinstance(data,list): return {'arrayValue':{'values':[value(v) for v in data]}}
-            if isinstance(data,bool): return {'booleanValue':data}
-            return {'stringValue':data}
-        found=[{'document':{'name':base+id,'fields':{k:value(v) for k,v in data.items()}}} for id,data in products()]
-        transport=AsyncMock(side_effect=[HTTPResult(200,{},json.dumps(missing)),HTTPResult(200,{},json.dumps(found))])
-        service=FirebaseService('public','{}',transport)
-        with patch.object(service,'access_token',AsyncMock(return_value='token')):
-            records=await service.catalog(context())
-            self.assertEqual(len(records),4)
-            self.assertEqual(await service.catalog(context()),records)
-        self.assertEqual(transport.call_count,2)
-        query=transport.call_args.kwargs['payload']['structuredQuery']
-        self.assertEqual(query['startAt'],{'values':[{'referenceValue':base+'149'}],'before':False})
-        self.assertTrue(all(data['imagemSwift']['url'] for _,data in records))
-        self.assertNotIn('Margem',str(service.cache.memory))
-
-    async def test_catalog_queries_indexed_flags_and_caches_with_server_projection(self):
-        docs=[{'document':{'name':'projects/epav-game/databases/(default)/documents/produtos_swift/p'+str(i),
-                          'fields':{'nome':{'stringValue':'Produto '+str(i)},'disponivelNoJogo':{'booleanValue':True},
-                                    'tiposProduto':{'arrayValue':{'values':[{'stringValue':'Carnes'}]}},
-                                    'ocasioes':{'arrayValue':{'values':[{'stringValue':'Dia a dia'}]}},
-                                    'imagemSwift':{'mapValue':{'fields':{'url':{'stringValue':products()[0][1]['imagemSwift']['url']}}}}}}} for i in range(150)]
-        transport=AsyncMock(return_value=HTTPResult(200,{},json.dumps(docs)))
-        service=FirebaseService('public','{}',transport)
-        with patch.object(service,'access_token',AsyncMock(return_value='token')):
-            records=await service.catalog();self.assertEqual(len(records),150)
-            self.assertEqual(await service.catalog(),records)
-        self.assertEqual(transport.call_count,1)
-        query=transport.call_args.kwargs['payload']['structuredQuery']
-        self.assertEqual(query['where']['compositeFilter']['filters'][0]['fieldFilter']['value'],{'booleanValue':True})
-        self.assertTrue(all('Margem' not in field['fieldPath'] for field in query['select']['fields']))
-
-    async def test_only_queries_the_configured_occasion_and_reuses_it_for_same_profile(self):
-        transport=AsyncMock(return_value=HTTPResult(200,{},'[]'))
-        service=FirebaseService('public','{}',transport)
-        with patch.object(service,'access_token',AsyncMock(return_value='token')):
+    async def test_all_profiles_reuse_one_query_and_never_keep_missing_photos(self):
+        from cache import SharedCache
+        from test_cache import MemoryRedis
+        data=[dict(row,id=id) for id,row in products()]
+        data.append(dict(data[0],id='missing',imagemSwift={}))
+        database=type('DB',(),{'catalog':AsyncMock(return_value=data)})()
+        service=FirebaseService('public',cache=SharedCache(MemoryRedis()))
+        with patch.object(service,'database',return_value=database):
             for client_id in STAGES:
-                await service.catalog({'cliente':{'id':client_id}})
-        self.assertEqual(transport.call_count,3)
-        facets=[call.kwargs['payload']['structuredQuery']['where']['compositeFilter']['filters'][1]
-                ['fieldFilter']['field']['fieldPath'] for call in transport.call_args_list]
-        self.assertEqual(set(facets),{'`dadosOriginais`.`Churrasco`','`dadosOriginais`.`Praticidade`','`dadosOriginais`.`Dia a dia`'})
+                records=await service.catalog({'cliente':{'id':client_id}})
+                self.assertTrue(all(row['imagemSwift']['url'] for _,row in records))
+                self.assertNotIn('missing',[id for id,_ in records])
+        database.catalog.assert_awaited_once()

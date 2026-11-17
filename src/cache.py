@@ -38,7 +38,7 @@ class SharedCache:
         except Exception:
             self.unavailable_until = time.monotonic() + 30
             # A safe diagnostic without key, value, username or password.
-            print(json.dumps({'event': 'cache_unavailable', 'fallback': 'firestore'}))
+            print(json.dumps({'event': 'cache_unavailable', 'fallback': 'postgresql'}))
             raise OSError('Cache unavailable') from None
 
     async def version(self):
@@ -71,8 +71,8 @@ class SharedCache:
         return value
 
     async def check_quota(self):
-        # Brief shared backoff prevents an empty cache from hammering exhausted Firestore.
-        if await self.invoke('get', key='firestore-quota-backoff'):
+        # Brief shared backoff prevents an empty cache from hammering an unavailable database.
+        if await self.invoke('get', key='database-backoff'):
             from services import ServiceError
             raise ServiceError('CATALOG_QUOTA_EXCEEDED', 503, 30)
 
@@ -81,9 +81,9 @@ class SharedCache:
         try:
             return await loader()
         except ServiceError as error:
-            if error.code == 'CATALOG_QUOTA_EXCEEDED':
+            if error.code in ('CATALOG_QUOTA_EXCEEDED','DATABASE_UNAVAILABLE'):
                 try:
-                    await self.invoke('set', key='firestore-quota-backoff', value='1', ttl=30)
+                    await self.invoke('set', key='database-backoff', value='1', ttl=30)
                 except OSError:
                     pass
             raise
@@ -117,7 +117,7 @@ class SharedCache:
                             raise ServiceError('CATALOG_BUSY', 503, 5)
                         claimed = await self.invoke('claim', key=lock_key, value=owner, ttl=30)
                 except (OSError, ValueError, TypeError):
-                    # Redis failure never stops a working Firebase read.
+                    # Redis failure never stops a working PostgreSQL read.
                     value = await self.load(loader)
                     self.remember(key, value, min(ttl, 30))
                     return value

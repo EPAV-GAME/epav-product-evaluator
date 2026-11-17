@@ -48,5 +48,6 @@
       "binding": "REDIS_CACHE",
       "service": "epav-redis-cache"
     }
-  ]
+  ],
+  "account_id": "9cc0381fc2388fed8647d4ce2c6c7d9c"
 }

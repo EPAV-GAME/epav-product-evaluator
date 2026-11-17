@@ -14,7 +14,7 @@ from evaluator import final_result,provider_payload,RUBRIC_VERSION
 from services import cached_services,ServiceError
 from recommendations import recommendation_context,select_products
 
-CONFIG_NAMES = ['GROQ_API_KEYS','GROQ_MODEL','FIREBASE_SERVICE_ACCOUNT_JSON','FIREBASE_WEB_API_KEY','ALLOWED_ORIGINS','CACHE_INVALIDATION_TOKEN']
+CONFIG_NAMES = ['GROQ_API_KEYS','GROQ_MODEL','DATABASE_URL','DATA_SYNC_TOKEN','FIREBASE_WEB_API_KEY','ALLOWED_ORIGINS','CACHE_INVALIDATION_TOKEN']
 
 def config_for(request):
     env = request.scope.get('env')
@@ -43,7 +43,7 @@ class BodyLimit:
         await self.app(scope,replay,send)
 
 app=FastAPI(title='EPAV — Catálogo compartilhado e avaliação com IA',version='1.6.0',
-            description='Avaliação pedagógica de adequação: 0 a 1000, usando cenários oficiais e catálogo Firebase.')
+            description='Avaliação pedagógica de adequação: 0 a 1000, usando cenários oficiais e catálogo PostgreSQL.')
 app.add_middleware(BodyLimit)
 app.add_middleware(CORSMiddleware,allow_origins=['https://epav-game.github.io'],
                    allow_methods=['GET','POST'],allow_headers=['Authorization','Content-Type'],
@@ -132,7 +132,7 @@ async def verified_context(choice:EvaluationRequest,request:Request,response:Res
 @app.get('/health')
 async def health(request:Request):
     config=config_for(request)
-    return dict(service='epav-product-evaluator',configured=bool(config['GROQ_API_KEYS'] and config['FIREBASE_SERVICE_ACCOUNT_JSON']),versao_rubrica=RUBRIC_VERSION, cache_configured=config.get('CACHE_BINDING') is not None,
+    return dict(service='epav-product-evaluator',configured=bool(config['GROQ_API_KEYS'] and config['DATABASE_URL']),versao_rubrica=RUBRIC_VERSION, cache_configured=config.get('CACHE_BINDING') is not None, banco='postgresql', autenticacao='firebase',
                 selecao_produtos='parametros_e_sorteio_sem_ia',produtos_com_imagem=True,
                 cardapio_categorias=['entrada','principal','acompanhamento','bebida','sobremesa'],opcoes_por_categoria=10)
 
@@ -193,7 +193,7 @@ async def evaluate(choice:EvaluationRequest,request:Request,response:Response,cr
             started = time.monotonic()
             # Authenticate before parsing Groq keys; unconfigured service never becomes public.
             from services import FirebaseService
-            firebase = FirebaseService(config['FIREBASE_WEB_API_KEY'],config['FIREBASE_SERVICE_ACCOUNT_JSON'])
+            firebase = FirebaseService(config['FIREBASE_WEB_API_KEY'])
             uid=await firebase.authenticate(credentials.credentials)
             authenticated = time.monotonic()
             stage='rate_limits'
@@ -228,6 +228,9 @@ async def evaluate(choice:EvaluationRequest,request:Request,response:Response,cr
                 for frame in traceback.extract_tb(error.__traceback__)[-4:]]
         print(json.dumps({'event':'evaluation_failed','stage':stage,'reason':type(error).__name__,'markers':markers,'frames':frames}))
         raise ServiceError('EVALUATION_FAILED',502) from None
+
+from data_routes import install_data_routes
+install_data_routes(app,config_for,bearer,authorize)
 
 if sys.platform=='emscripten':
     from workers import asgi
