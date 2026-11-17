@@ -11,7 +11,7 @@ API FastAPI no Cloudflare para os dois jogos EPAV. Catálogo, ranking, painel e 
 - `POST /v1/admin/produtos/{id}`: edição validada, revisão obrigatória e histórico na mesma transação.
 - `/v1/sync/*`: operações do robô com segredo exclusivo; não acessíveis com tokens de jogadores.
 
-O esquema operacional `epav_data` tem registros e campos tipados, ranking com colunas próprias e uma view pública de produtos. As cópias de importação em `epav_migration` são preservadas. Nenhuma tabela ou view possui colunas TEXT, JSON ou JSONB. JSON é utilizado somente nas mensagens HTTP e nos parâmetros de consultas. SQL e scripts estão em [epav-modelagem](https://github.com/EPAV-GAME/epav-modelagem).
+As tabelas de negócio e a view pública ficam em `epav_data`. O suporte tipado necessário à API fica em `epav_internal`, fora do explorador. As cópias antigas da migração foram retiradas da produção e preservadas em uma branch de backup do Neon. Nenhuma tabela ou view possui colunas TEXT, JSON ou JSONB. JSON é utilizado somente nas mensagens HTTP e nos parâmetros de consultas. SQL e scripts estão em [epav-modelagem](https://github.com/EPAV-GAME/epav-modelagem).
 
 ## Configuração
 
