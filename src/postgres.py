@@ -95,10 +95,10 @@ class Postgres:
           'fields',coalesce((SELECT jsonb_agg((to_jsonb(f)-'document_row_id'-'timestamp_value'-'bytes_value'-'integer_value')
             ||jsonb_build_object('timestamp_value',to_char(f.timestamp_value AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
               'bytes_value',replace(encode(f.bytes_value,'base64'),chr(10),''),'integer_value',f.integer_value::varchar)
-            ORDER BY f.node_no) FROM epav_data.record_fields f WHERE f.document_row_id=r.row_id),'[]'::jsonb))
-          FROM epav_data.records r WHERE r.collection_path=$1
+            ORDER BY f.node_no) FROM epav_internal.record_fields f WHERE f.document_row_id=r.row_id),'[]'::jsonb))
+          FROM epav_internal.records r WHERE r.collection_path=$1
             AND (CASE WHEN $5::boolean THEN ($2='' OR (r.created_at,r.document_id)<
-              (SELECT created_at,document_id FROM epav_data.records WHERE collection_path=$1 AND document_id=$2))
+              (SELECT created_at,document_id FROM epav_internal.records WHERE collection_path=$1 AND document_id=$2))
               ELSE r.document_id>$2 END)
             AND ($4::varchar IS NULL OR r.document_id=$4)
           ORDER BY CASE WHEN $5::boolean THEN r.created_at END DESC,
