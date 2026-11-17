@@ -9,12 +9,15 @@ async def main():
  print('Ranking:',len(await db.ranking()))
  from postgres import encode
  from services import ServiceError
- queries=[db.put_query('_migration_probe','rollback',{'n':encode(1)},''),
-          db.put_query('_migration_probe','rollback',{'n':encode(2)},'')]
+ records=await db.records('produtos_swift',limit=1)
+ original=records[0]
+ queries=[db.put_query('produtos_swift',original['id'],original['fields'],original['revision']),
+          db.put_query('produtos_swift',original['id'],original['fields'],original['revision'])]
  try: await db.execute(queries,batch=True)
  except ServiceError as error:
   assert error.code=='CONFLICT'
  else: raise AssertionError('Expected rollback')
- assert not await db.records('_migration_probe',id='rollback',limit=1)
+ restored=(await db.records('produtos_swift',id=original['id'],limit=1))[0]
+ assert restored['revision']==original['revision'] and restored['fields']==original['fields']
  print('Atomic conflict rolled back every write: OK')
 asyncio.run(main())

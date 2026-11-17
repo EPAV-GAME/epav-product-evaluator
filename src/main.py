@@ -132,7 +132,7 @@ async def verified_context(choice:EvaluationRequest,request:Request,response:Res
 @app.get('/health')
 async def health(request:Request):
     config=config_for(request)
-    return dict(service='epav-product-evaluator',configured=bool(config['GROQ_API_KEYS'] and config['DATABASE_URL']),versao_rubrica=RUBRIC_VERSION, cache_configured=config.get('CACHE_BINDING') is not None, banco='postgresql', autenticacao='firebase', versao_dados=2,
+    return dict(service='epav-product-evaluator',configured=bool(config['GROQ_API_KEYS'] and config['DATABASE_URL']),versao_rubrica=RUBRIC_VERSION, cache_configured=config.get('CACHE_BINDING') is not None, banco='postgresql', autenticacao='firebase', versao_dados=3,
                 selecao_produtos='parametros_e_sorteio_sem_ia',produtos_com_imagem=True,
                 cardapio_categorias=['entrada','principal','acompanhamento','bebida','sobremesa'],opcoes_por_categoria=10)
 

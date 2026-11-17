@@ -3,8 +3,8 @@ import unittest
 from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 from main import app
-from postgres import Postgres, flatten, rebuild, encode
-from services import ServiceError, HTTPResult, FirebaseService
+from postgres import Postgres, encode
+from services import ServiceError, HTTPResult, FirebaseService, decode
 from data_routes import validate_edit, TYPES, OCCASIONS
 
 class TransportTest(unittest.IsolatedAsyncioTestCase):
@@ -23,16 +23,15 @@ class TransportTest(unittest.IsolatedAsyncioTestCase):
     async def test_batch_is_one_serializable_transaction(self):
         transport=AsyncMock(return_value=HTTPResult(200,{},json.dumps({'results':[{'rows':[['true']]},{'rows':[['"new"']]}]})))
         db=Postgres('postgres://u:p@ep-example.neon.tech/db',transport)
-        await db.execute([{'query':'SELECT true','params':[]},db.put_query('c','id',{},'old')],batch=True)
+        await db.execute([{'query':'SELECT true','params':[]},db.put_query('produtos_swift','id',{},'old')],batch=True)
         self.assertEqual(transport.call_count,1)
         self.assertEqual(transport.call_args.kwargs['headers']['Neon-Batch-Isolation-Level'],'Serializable')
 
 class TypesTest(unittest.TestCase):
-    def test_typed_roundtrip_keeps_int64_timestamp_reference_bytes_and_empty_maps(self):
-        fields={'i':{'integerValue':'9223372036854775807'},'t':{'timestampValue':'2026-11-17T12:00:00.123456Z'},
-            'r':{'referenceValue':'projects/p/databases/(default)/documents/c/d'},'b':{'bytesValue':'AAE='},
-            'empty':{'mapValue':{}},'list':{'arrayValue':{'values':[encode(True),encode(None),encode({'a':'b'})]}}}
-        self.assertEqual(rebuild(flatten(fields)),fields)
+    def test_transport_preserves_nested_products_and_versions(self):
+        product={'nome':'Produto','dadosOriginais':{'Volume (UN)':2,'Preço Médio C/ Desconto':'-'},
+            'tiposProduto':['Carnes'],'imagemSwift':{'bytes':5000},'atualizadoEm':'2026-11-17T12:00:00Z'}
+        self.assertEqual(decode(encode(product)),product)
 
     def test_admin_edit_preserves_private_source_and_rejects_unknown_categories(self):
         original=dict(nome='Produto',disponivelNoJogo=True,tiposProduto=['Carnes'],ocasioes=['Dia a dia'],

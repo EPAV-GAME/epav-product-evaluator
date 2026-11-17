@@ -145,6 +145,10 @@ def install_data_routes(app,config_for,bearer,authorize):
         service=sync(request,credentials); body=await request.json()
         collection=body.get('collection'); id=identifier(body.get('id')); fields=body.get('fields')
         if collection not in {'produtos_swift','sincronizacao_imagens_swift'} or not isinstance(fields,dict): raise ServiceError('VALIDATION',422)
+        if collection=='sincronizacao_imagens_swift':
+            fields={key:value for key,value in fields.items() if key!='_updatedAt'}
+            if set(fields)-{'sourceUrl','checkedAt','status','etag','lastModified','pixelHash'}:
+                raise ServiceError('VALIDATION',422)
         if collection=='produtos_swift' and (set(fields)!={'imagemSwift'} or not isinstance(body.get('version'),str)):
             raise ServiceError('VALIDATION',422)
         db=service.database(); rows=await db.records(collection,id=id,limit=1)
@@ -175,9 +179,9 @@ def install_data_routes(app,config_for,bearer,authorize):
         if canonical:
             identifier(canonical)
             if canonical==id: raise ServiceError('VALIDATION',422)
-            queries.append(dict(query="SELECT to_jsonb(epav_data.check_revision('produtos_swift',$1,$2))",params=[canonical,body.get('canonical_version')]))
+            queries.append(dict(query="SELECT to_jsonb(epav_data.verify_document_revision('produtos_swift',$1,$2))",params=[canonical,body.get('canonical_version')]))
         queries.extend([db.put_query('arquivo_produtos_swift',aid,data,''),
-            dict(query="SELECT to_jsonb(epav_data.delete_record('produtos_swift',$1,$2))",params=[id,version])])
+            dict(query="SELECT to_jsonb(epav_data.remove_product($1,$2))",params=[id,version])])
         await db.execute(queries,batch=True); await invalidate(service)
         return {'status':'archived'}
 
