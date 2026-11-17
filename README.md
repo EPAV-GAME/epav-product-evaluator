@@ -11,7 +11,7 @@ API FastAPI no Cloudflare para os dois jogos EPAV. Catálogo, ranking, painel e 
 - `POST /v1/admin/produtos/{id}`: edição validada, revisão obrigatória e histórico na mesma transação.
 - `/v1/sync/*`: operações do robô com segredo exclusivo; não acessíveis com tokens de jogadores.
 
-A API usa diretamente as 11 tabelas funcionais de `epav_data`. Elas atendem produtos, fotos, dados da planilha, versões históricas, auditoria, arquivos recuperáveis, importações, sincronização e ranking. As revisões e os horários ficam nas próprias tabelas. Cada edição e sua auditoria usam uma transação serializável.
+A API usa diretamente as 10 tabelas funcionais de `epav_data`. Elas atendem produtos, fotos, dados da planilha, versões históricas, auditoria, arquivos recuperáveis, sincronização e ranking. As revisões e os horários ficam nas próprias tabelas. Cada edição e sua auditoria usam uma transação serializável.
 
 O armazenamento genérico e as tabelas internas da migração foram excluídos. Os 5.646 registros antigos do Firestore também foram excluídos após a conferência dos dados no Postgres. Nenhuma tabela ou view usa colunas TEXT, JSON ou JSONB. JSON aparece apenas nas mensagens e parâmetros HTTP. Os scripts e o mapa estão em [epav-modelagem](https://github.com/EPAV-GAME/epav-modelagem).
 
