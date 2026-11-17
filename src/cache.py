@@ -74,7 +74,7 @@ class SharedCache:
         # Brief shared backoff prevents an empty cache from hammering an unavailable database.
         if await self.invoke('get', key='database-backoff'):
             from services import ServiceError
-            raise ServiceError('CATALOG_QUOTA_EXCEEDED', 503, 30)
+            raise ServiceError('DATABASE_UNAVAILABLE', 503, 30)
 
     async def load(self, loader):
         from services import ServiceError
