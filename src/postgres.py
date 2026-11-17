@@ -91,7 +91,7 @@ class Postgres:
 
     async def records(self,collection,after='',limit=100,id=None,recent=False):
         # Return only the requested page, preserving original typed values exactly.
-        result=await self.query('''SELECT jsonb_build_object('id',r.document_id,'revision',r.revision,
+        result=await self.query('''SELECT jsonb_build_object('id',r.document_id,'revision',r.revision,'updatedAt',r.updated_at,
           'fields',coalesce((SELECT jsonb_agg((to_jsonb(f)-'document_row_id'-'timestamp_value'-'bytes_value'-'integer_value')
             ||jsonb_build_object('timestamp_value',to_char(f.timestamp_value AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
               'bytes_value',replace(encode(f.bytes_value,'base64'),chr(10),''),'integer_value',f.integer_value::varchar)
